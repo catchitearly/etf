@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>India ETF RS Matrix Backtester</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --card2: #22263a;
+    --border: #2e3250;
+    --accent: #4f8ef7;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --text: #e2e8f0;
+    --muted: #8892b0;
+    --font: 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 18px 32px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; color: var(--accent); }
+  header span { color: var(--muted); font-size: 0.85rem; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px 24px; }
+  .btn { background: var(--accent); color: #fff; border: none; padding: 10px 28px; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+  .status-bar { background: var(--card2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; font-size: 0.9rem; }
+  .status-bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--yellow); animation: pulse 1.2s infinite; }
+  .status-bar .dot.done { background: var(--green); animation: none; }
+  .status-bar .dot.err { background: var(--red); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .progress-bar { height: 4px; background: var(--border); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+  .stat-card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .stat-card .value { font-size: 1.5rem; font-weight: 700; }
+  .stat-card .value.green { color: var(--green); }
+  .stat-card .value.red { color: var(--red); }
+  .stat-card .value.accent { color: var(--accent); }
+  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
+  .chart-card h3 { font-size: 0.95rem; color: var(--muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart-wrap { position: relative; height: 300px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+  @media(max-width:800px){ .grid-2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { background: var(--card2); color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+  .badge.green { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge.red { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge.blue { background: rgba(79,142,247,0.15); color: var(--accent); }
+  .matrix-wrap { overflow-x: auto; margin-bottom: 24px; }
+  .matrix-table { border-collapse: collapse; font-size: 0.75rem; white-space: nowrap; }
+  .matrix-table th, .matrix-table td { padding: 6px 8px; border: 1px solid var(--border); text-align: center; min-width: 60px; }
+  .matrix-table th { background: var(--card2); color: var(--muted); font-weight: 600; }
+  .matrix-table .row-label { font-weight: 600; color: var(--text); background: var(--card2); text-align: left; }
+  .section-title { font-size: 1rem; font-weight: 700; color: var(--text); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .section-title::before { content:''; display:block; width:4px; height:18px; background:var(--accent); border-radius:2px; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; background: rgba(79,142,247,0.1); border: 1px solid rgba(79,142,247,0.3); color: var(--accent); border-radius: 6px; padding: 3px 10px; font-size: 0.8rem; font-weight: 600; }
+  .rank-badge { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-size: 0.75rem; font-weight: 700; }
+  .rank-1 { background: #f59e0b22; color: #f59e0b; }
+  .rank-2 { background: #94a3b822; color: #94a3b8; }
+  .rank-3 { background: #b4521522; color: #b45215; }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--card2); padding: 4px; border-radius: 8px; width: fit-content; }
+  .tab { padding: 7px 18px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500; color: var(--muted); transition: all 0.15s; }
+  .tab.active { background: var(--accent); color: #fff; }
+  #log-container { max-height: 400px; overflow-y: auto; }
+  .log-row { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; align-items: flex-start; }
+  .log-date { color: var(--muted); min-width: 90px; }
+  .log-body { flex: 1; }
+  .log-holds { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🇮🇳 India ETF — Pairwise RS Matrix Backtester</h1>
+    <span>12 ETFs · Weekly Rebalance · Top-3 Long · ₹10,00,000 · Jan 2023–Jun 2026</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Status -->
+  <div class="status-bar" id="status-bar">
+    <div class="dot" id="status-dot"></div>
+    <div style="flex:1">
+      <div id="status-text">Click "Run Backtest" to fetch data and run the strategy.</div>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    </div>
+    <button class="btn" id="run-btn" onclick="runBacktest()">▶ Run Backtest</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card"><div class="label">Final Portfolio</div><div class="value accent" id="s-final">—</div></div>
+    <div class="stat-card"><div class="label">Total Return</div><div class="value" id="s-return">—</div></div>
+    <div class="stat-card"><div class="label">CAGR</div><div class="value" id="s-cagr">—</div></div>
+    <div class="stat-card"><div class="label">Sharpe Ratio</div><div class="value" id="s-sharpe">—</div></div>
+    <div class="stat-card"><div class="label">Max Drawdown</div><div class="value red" id="s-dd">—</div></div>
+    <div class="stat-card"><div class="label">Total Trades</div><div class="value" id="s-trades">—</div></div>
+    <div class="stat-card"><div class="label">Nifty CAGR</div><div class="value" id="s-nifty">—</div></div>
+    <div class="stat-card"><div class="label">Alpha vs Nifty</div><div class="value green" id="s-alpha">—</div></div>
+  </div>
+
+  <!-- Equity Curve -->
+  <div class="chart-card">
+    <h3>📈 Equity Curve — Strategy vs Nifty</h3>
+    <div class="chart-wrap"><canvas id="equity-chart"></canvas></div>
+  </div>
+
+  <!-- Drawdown -->
+  <div class="chart-card">
+    <h3>📉 Drawdown</h3>
+    <div class="chart-wrap" style="height:180px"><canvas id="dd-chart"></canvas></div>
+  </div>
+
+  <div class="grid-2">
+    <!-- Rankings -->
+    <div class="chart-card">
+      <div class="section-title">Current RS Rankings</div>
+      <div id="rankings-table">
+        <div class="empty-state"><div class="icon">📊</div><div>Run backtest to see rankings</div></div>
+      </div>
+    </div>
+    <!-- Instrument Stats -->
+    <div class="chart-card">
+      <div class="section-title">Per-Instrument Contribution</div>
+      <div id="contrib-table">
+        <div class="empty-state"><div class="icon">🏦</div><div>Run backtest to see contributions</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RS Matrix -->
+  <div class="chart-card">
+    <div class="section-title">Current Pairwise RS Matrix (63-day) — Row outperforms Column</div>
+    <div class="matrix-wrap" id="matrix-wrap">
+      <div class="empty-state"><div class="icon">🔲</div><div>Run backtest to see matrix</div></div>
+    </div>
+  </div>
+
+  <!-- Trade Log -->
+  <div class="chart-card">
+    <div class="section-title">Weekly Rebalance Log</div>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('all')">All Weeks</div>
+      <div class="tab" onclick="switchTab('changes')">Changes Only</div>
+    </div>
+    <div id="log-container">
+      <div class="empty-state"><div class="icon">📋</div><div>Run backtest to see trade log</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const ETFS = [
+  { sym: 'GOLDBEES.NS',    name: 'GoldBees',     short: 'GOLD' },
+  { sym: 'SILVERBEES.NS',  name: 'SilverBees',   short: 'SILV' },
+  { sym: 'GSCOMP.NS',      name: 'GS Composite', short: 'GSCP' },
+  { sym: 'NIFTYBEES.NS',   name: 'NiftyBees',    short: 'NFTY' },
+  { sym: 'JUNIORBEES.NS',  name: 'JuniorBees',   short: 'JNBR' },
+  { sym: 'BANKBEES.NS',    name: 'BankBees',     short: 'BANK' },
+  { sym: 'ITMCAP.NS',      name: 'ITBees',       short: 'ITMC' },
+  { sym: 'PSUBNKBEES.NS',  name: 'PSUBankBees',  short: 'PSUB' },
+  { sym: 'PHARMABEES.NS',  name: 'PharmaBees',   short: 'PHRM' },
+  { sym: 'AUTOBEES.NS',    name: 'AutoBees',     short: 'AUTO' },
+  { sym: 'MOM100.NS',      name: 'Momentum100',  short: 'MOM' },
+  { sym: 'INFRABEES.NS',   name: 'InfraBees',    short: 'INFR' },
+];
+
+const LOOKBACK = 63;
+const TOP_N = 3;
+const COST_PCT = 0.001;
+const INITIAL_CAPITAL = 1000000;
+
+let equityChart = null, ddChart = null;
+let allLogs = [], changeOnlyLogs = [];
+let currentTab = 'all';
+
+function setStatus(msg, pct, state='loading') {
+  document.getElementById('status-text').textContent = msg;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const dot = document.getElementById('status-dot');
+  dot.className = 'dot' + (state==='done' ? ' done' : state==='err' ? ' err' : '');
+}
+
+async function fetchYahoo(symbol, from, to) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${from}&period2=${to}&events=history`;
+  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+  const r = await fetch(proxyUrl);
+  const json = await r.json();
+  const data = JSON.parse(json.contents);
+  const result = data?.chart?.result?.[0];
+  if (!result) return null;
+  const timestamps = result.timestamp;
+  const closes = result.indicators?.adjclose?.[0]?.adjclose || result.indicators?.quote?.[0]?.close;
+  if (!timestamps || !closes) return null;
+  const out = {};
+  for (let i = 0; i < timestamps.length; i++) {
+    if (closes[i] != null) {
+      const d = new Date(timestamps[i] * 1000);
+      const key = d.toISOString().split('T')[0];
+      out[key] = closes[i];
+    }
+  }
+  return out;
+}
+
+function getAllFridays(startDate, endDate) {
+  const fridays = [];
+  const d = new Date(startDate);
+  while (d.getDay() !== 5) d.setDate(d.getDate() + 1);
+  while (d <= endDate) {
+    fridays.push(new Date(d));
+    d.setDate(d.getDate() + 7);
+  }
+  return fridays;
+}
+
+function getClosestDate(priceMap, targetDate) {
+  const target = targetDate.toISOString().split('T')[0];
+  // try exact, then go back up to 5 days
+  for (let i = 0; i <= 5; i++) {
+    const d = new Date(targetDate);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().split('T')[0];
+    if (priceMap[key] != null) return priceMap[key];
+  }
+  return null;
+}
+
+function computeRS(priceMaps, date, lookback) {
+  // RS score for each ETF = sum of (etf_ret - other_ret) for all others
+  const scores = {};
+  const rets = {};
+  const pastDate = new Date(date);
+  pastDate.setDate(pastDate.getDate() - lookback);
+
+  for (const etf of ETFS) {
+    const cur = getClosestDate(priceMaps[etf.sym], date);
+    const past = getClosestDate(priceMaps[etf.sym], pastDate);
+    if (cur && past && past > 0) {
+      rets[etf.sym] = (cur / past) - 1;
+    } else {
+      rets[etf.sym] = null;
+    }
+  }
+
+  for (const etf of ETFS) {
+    if (rets[etf.sym] === null) { scores[etf.sym] = null; continue; }
+    let score = 0, count = 0;
+    for (const other of ETFS) {
+      if (other.sym === etf.sym || rets[other.sym] === null) continue;
+      score += rets[etf.sym] - rets[other.sym];
+      count++;
+    }
+    scores[etf.sym] = count > 0 ? score / count : 0;
+  }
+  return { scores, rets };
+}
+
+function buildMatrix(rets) {
+  // matrix[i][j] = return_i - return_j (positive = i outperforms j)
+  const n = ETFS.length;
+  const matrix = Array.from({length: n}, () => Array(n).fill(null));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) { matrix[i][j] = 0; continue; }
+      const ri = rets[ETFS[i].sym], rj = rets[ETFS[j].sym];
+      if (ri !== null && rj !== null) matrix[i][j] = ri - rj;
+    }
+  }
+  return matrix;
+}
+
+function getTopN(scores, n) {
+  return ETFS
+    .filter(e => scores[e.sym] !== null)
+    .sort((a, b) => scores[b.sym] - scores[a.sym])
+    .slice(0, n)
+    .map(e => e.sym);
+}
+
+async function runBacktest() {
+  document.getElementById('run-btn').disabled = true;
+  const startDate = new Date('2023-01-01');
+  const endDate = new Date('2026-06-13');
+  const from = Math.floor(new Date('2022-06-01').getTime() / 1000); // extra history for lookback
+  const to = Math.floor(endDate.getTime() / 1000);
+
+  setStatus('Fetching price data from Yahoo Finance...', 5);
+
+  // Fetch all ETFs
+  const priceMaps = {};
+  for (let i = 0; i < ETFS.length; i++) {
+    const etf = ETFS[i];
+    setStatus(`Fetching ${etf.name} (${i+1}/${ETFS.length})...`, 5 + (i / ETFS.length * 40));
+    try {
+      const data = await fetchYahoo(etf.sym, from, to);
+      priceMaps[etf.sym] = data || {};
+    } catch(e) {
+      priceMaps[etf.sym] = {};
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  setStatus('Running backtest...', 50);
+
+  const fridays = getAllFridays(startDate, endDate);
+  let capital = INITIAL_CAPITAL;
+  let holdings = {}; // sym -> shares
+  let currentTop3 = [];
+  const equityCurve = [];
+  const niftyCurve = [];
+  let totalTrades = 0;
+  const instrTrades = {};
+  const instrPnl = {};
+  ETFS.forEach(e => { instrTrades[e.sym] = 0; instrPnl[e.sym] = 0; });
+
+  allLogs = [];
+  changeOnlyLogs = [];
+
+  // Get Nifty baseline
+  const niftyPrices = priceMaps['NIFTYBEES.NS'];
+  const niftyStart = getClosestDate(niftyPrices, startDate);
+
+  let peakEquity = capital;
+  const ddCurve = [];
+
+  for (let wi = 0; wi < fridays.length; wi++) {
+    const friday = fridays[wi];
+    setStatus(`Backtesting week ${wi+1}/${fridays.length}...`, 50 + (wi / fridays.length * 45));
+
+    const { scores, rets } = computeRS(priceMaps, friday, LOOKBACK);
+    const newTop3 = getTopN(scores, TOP_N);
+
+    if (newTop3.length < TOP_N) continue;
+
+    // Check if rebalance needed
+    const needsRebalance = wi === 0 || 
+      newTop3.some(s => !currentTop3.includes(s)) || 
+      currentTop3.some(s => !newTop3.includes(s));
+
+    const logEntry = {
+      date: friday.toISOString().split('T')[0],
+      top3: newTop3,
+      scores,
+      rets,
+      changed: needsRebalance && wi > 0,
+      exiting: currentTop3.filter(s => !newTop3.includes(s)),
+      entering: newTop3.filter(s => !currentTop3.includes(s)),
+      capital: 0
+    };
+
+    if (needsRebalance) {
+      // Sell all current holdings
+      for (const sym of Object.keys(holdings)) {
+        if (holdings[sym] > 0) {
+          const price = getClosestDate(priceMaps[sym], friday);
+          if (price) {
+            const proceeds = holdings[sym] * price * (1 - COST_PCT);
+            capital += proceeds;
+            instrTrades[sym]++;
+            totalTrades++;
+          }
+          holdings[sym] = 0;
+        }
+      }
+
+      // Buy new top 3 equally
+      const perPos = capital / TOP_N;
+      for (const sym of newTop3) {
+        const price = getClosestDate(priceMaps[sym], friday);
+        if (price) {
+          const costCapital = perPos * (1 - COST_PCT);
+          holdings[sym] = costCapital / price;
+          instrTrades[sym]++;
+          totalTrades++;
+        }
+      }
+    }
+
+    // Mark to market
+    let portfolioValue = 0;
+    for (const sym of Object.keys(holdings)) {
+      if (holdings[sym] > 0) {
+        const price = getClosestDate(priceMaps[sym], friday);
+        if (price) portfolioValue += holdings[sym] * price;
+      }
+    }
+    // Add any cash not deployed (shouldn't be much)
+    const deployedSyms = new Set(newTop3);
+    // capital at this point is already in holdings, so portfolio value IS the equity
+    // But we need to track: after buying, capital should be ~0 (all in)
+    // Let's just use portfolio mark
+    if (portfolioValue < 100) portfolioValue = capital; // fallback
+
+    logEntry.capital = portfolioValue;
+    allLogs.push(logEntry);
+    if (logEntry.changed || wi === 0) changeOnlyLogs.push(logEntry);
+
+    equityCurve.push({ x: friday.toISOString().split('T')[0], y: portfolioValue });
+
+    const niftyPrice = getClosestDate(niftyPrices, friday);
+    const niftyVal = niftyStart ? (niftyPrice / niftyStart) * INITIAL_CAPITAL : INITIAL_CAPITAL;
+    niftyCurve.push({ x: friday.toISOString().split('T')[0], y: niftyVal });
+
+    if (portfolioValue > peakEquity) peakEquity = portfolioValue;
+    ddCurve.push({ x: friday.toISOString().split('T')[0], y: ((portfolioValue - peakEquity) / peakEquity) * 100 });
+
+    currentTop3 = newTop3;
+  }
+
+  setStatus('Rendering results...', 97);
+  await new Promise(r => setTimeout(r, 50));
+
+  // --- STATS ---
+  const finalVal = equityCurve[equityCurve.length - 1]?.y || INITIAL_CAPITAL;
+  const totalReturn = (finalVal - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100;
+  const years = (endDate - startDate) / (365.25 * 24 * 3600 * 1000);
+  const cagr = (Math.pow(finalVal / INITIAL_CAPITAL, 1 / years) - 1) * 100;
+  const niftyFinal = niftyCurve[niftyCurve.length - 1]?.y || INITIAL_CAPITAL;
+  const niftyCagr = (Math.pow(niftyFinal / INITIAL_CAPITAL, 1 / years) - 1) * 100;
+  const alpha = cagr - niftyCagr;
+  const maxDD = Math.min(...ddCurve.map(d => d.y));
+  // Sharpe (weekly returns, annualized)
+  const weeklyRets = [];
+  for (let i = 1; i < equityCurve.length; i++) {
+    weeklyRets.push((equityCurve[i].y - equityCurve[i-1].y) / equityCurve[i-1].y);
+  }
+  const mean = weeklyRets.reduce((a,b)=>a+b,0)/weeklyRets.length;
+  const std = Math.sqrt(weeklyRets.reduce((a,b)=>a+(b-mean)**2,0)/weeklyRets.length);
+  const sharpe = (mean / std) * Math.sqrt(52);
+
+  document.getElementById('s-final').textContent = '₹' + (finalVal/100000).toFixed(2) + 'L';
+  const retEl = document.getElementById('s-return');
+  retEl.textContent = totalReturn.toFixed(1) + '%';
+  retEl.className = 'value ' + (totalReturn >= 0 ? 'green' : 'red');
+  document.getElementById('s-cagr').textContent = cagr.toFixed(1) + '%';
+  document.getElementById('s-cagr').className = 'value ' + (cagr >= 0 ? 'green' : 'red');
+  document.getElementById('s-sharpe').textContent = sharpe.toFixed(2);
+  document.getElementById('s-dd').textContent = maxDD.toFixed(1) + '%';
+  document.getElementById('s-trades').textContent = totalTrades;
+  document.getElementById('s-nifty').textContent = niftyCagr.toFixed(1) + '%';
+  const alphaEl = document.getElementById('s-alpha');
+  alphaEl.textContent = (alpha >= 0 ? '+' : '') + alpha.toFixed(1) + '%';
+  alphaEl.className = 'value ' + (alpha >= 0 ? 'green' : 'red');
+
+  // --- CHARTS ---
+  if (equityChart) equityChart.destroy();
+  if (ddChart) ddChart.destroy();
+
+  const eCtx = document.getElementById('equity-chart').getContext('2d');
+  equityChart = new Chart(eCtx, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'RS Strategy', data: equityCurve, borderColor: '#4f8ef7', backgroundColor: 'rgba(79,142,247,0.08)', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+        { label: 'Nifty Benchmark', data: niftyCurve, borderColor: '#f59e0b', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, borderDash: [5,4], tension: 0.3 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#8892b0', font: { size: 12 } } }, tooltip: { backgroundColor: '#1a1d27', titleColor: '#e2e8f0', bodyColor: '#8892b0', callbacks: { label: ctx => `${ctx.dataset.label}: ₹${(ctx.raw.y/1000).toFixed(0)}K` } } },
+      scales: {
+        x: { type: 'time', time: { unit: 'month' }, ticks: { color: '#8892b0', maxTicksLimit: 18 }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892b0', callback: v => '₹'+(v/1000).toFixed(0)+'K' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
+
+  const dCtx = document.getElementById('dd-chart').getContext('2d');
+  ddChart = new Chart(dCtx, {
+    type: 'line',
+    data: { datasets: [{ label: 'Drawdown %', data: ddCurve, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: true }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1d27', callbacks: { label: ctx => `DD: ${ctx.raw.y.toFixed(2)}%` } } },
+      scales: {
+        x: { type: 'time', time: { unit: 'month' }, ticks: { color: '#8892b0', maxTicksLimit: 18 }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892b0', callback: v => v.toFixed(1)+'%' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
+
+  // --- CURRENT RANKINGS ---
+  const lastLog = allLogs[allLogs.length - 1];
+  if (lastLog) {
+    const sorted = ETFS.filter(e => lastLog.scores[e.sym] !== null)
+      .sort((a,b) => lastLog.scores[b.sym] - lastLog.scores[a.sym]);
+    let html = '<table><thead><tr><th>Rank</th><th>ETF</th><th>RS Score</th><th>63d Return</th><th>Status</th></tr></thead><tbody>';
+    sorted.forEach((etf, idx) => {
+      const isTop = idx < TOP_N;
+      const ret = lastLog.rets[etf.sym];
+      const retStr = ret !== null ? (ret*100).toFixed(1)+'%' : '—';
+      const retClass = ret > 0 ? 'green' : 'red';
+      const rankBadge = idx === 0 ? `<span class="rank-badge rank-1">1</span>` : idx === 1 ? `<span class="rank-badge rank-2">2</span>` : idx === 2 ? `<span class="rank-badge rank-3">3</span>` : `<span style="color:var(--muted);font-size:0.8rem">${idx+1}</span>`;
+      html += `<tr style="${isTop ? 'background:rgba(79,142,247,0.05)' : ''}">
+        <td>${rankBadge}</td>
+        <td><b>${etf.name}</b> <span style="color:var(--muted);font-size:0.75rem">${etf.short}</span></td>
+        <td style="color:var(--accent)">${(lastLog.scores[etf.sym]*100).toFixed(2)}</td>
+        <td class="${retClass}">${retStr}</td>
+        <td>${isTop ? '<span class="badge green">▲ HOLD</span>' : '<span class="badge" style="background:rgba(136,146,176,0.1);color:var(--muted)">— OUT</span>'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('rankings-table').innerHTML = html;
+
+    // Matrix
+    const { rets: lastRets } = lastLog;
+    const matrix = buildMatrix(lastRets);
+    let mhtml = '<table class="matrix-table"><thead><tr><th>↓ vs →</th>';
+    ETFS.forEach(e => { mhtml += `<th>${e.short}</th>`; });
+    mhtml += '<th style="background:rgba(79,142,247,0.1);color:var(--accent)">Score</th></tr></thead><tbody>';
+    ETFS.forEach((etf, i) => {
+      const rowScore = matrix[i].filter(v => v !== null && v !== 0).reduce((a,b) => a + (b > 0 ? 1 : 0), 0);
+      mhtml += `<tr><td class="row-label">${etf.short}</td>`;
+      ETFS.forEach((_, j) => {
+        const val = matrix[i][j];
+        if (i === j) { mhtml += `<td style="background:var(--card2);color:var(--muted)">—</td>`; return; }
+        if (val === null) { mhtml += `<td style="color:var(--muted)">N/A</td>`; return; }
+        const pct = (val * 100).toFixed(1);
+        const intensity = Math.min(Math.abs(val) * 300, 0.7);
+        const bg = val > 0 ? `rgba(34,197,94,${intensity})` : `rgba(239,68,68,${intensity})`;
+        const tc = val > 0 ? '#22c55e' : '#ef4444';
+        mhtml += `<td style="background:${bg};color:${tc}">${pct}%</td>`;
+      });
+      mhtml += `<td style="background:rgba(79,142,247,0.1);color:var(--accent);font-weight:700">${rowScore}/${ETFS.length-1}</td></tr>`;
+    });
+    mhtml += '</tbody></table>';
+    document.getElementById('matrix-wrap').innerHTML = mhtml;
+  }
+
+  // --- CONTRIBUTION ---
+  // Count how many times each ETF was in top 3
+  const holdCount = {};
+  ETFS.forEach(e => holdCount[e.sym] = 0);
+  allLogs.forEach(log => log.top3.forEach(s => holdCount[s]++));
+  const sorted2 = [...ETFS].sort((a,b) => holdCount[b.sym] - holdCount[a.sym]);
+  let chtml = '<table><thead><tr><th>ETF</th><th>Weeks Held</th><th>% of Time</th><th>Trades</th></tr></thead><tbody>';
+  sorted2.forEach(etf => {
+    const pct = allLogs.length > 0 ? (holdCount[etf.sym] / allLogs.length * 100).toFixed(0) : 0;
+    const barW = pct;
+    chtml += `<tr>
+      <td><b>${etf.name}</b></td>
+      <td>${holdCount[etf.sym]}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="height:6px;width:${barW}px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px"></div>
+          <span>${pct}%</span>
+        </div>
+      </td>
+      <td style="color:var(--muted)">${instrTrades[etf.sym]}</td>
+    </tr>`;
+  });
+  chtml += '</tbody></table>';
+  document.getElementById('contrib-table').innerHTML = chtml;
+
+  // --- TRADE LOG ---
+  renderLog();
+
+  setStatus(`✅ Backtest complete — ${allLogs.length} weeks simulated, ${totalTrades} trades executed`, 100, 'done');
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-btn').textContent = '↺ Re-run';
+}
+
+function renderLog() {
+  const logs = currentTab === 'all' ? allLogs : changeOnlyLogs;
+  if (!logs.length) return;
+  let html = '';
+  const reversed = [...logs].reverse();
+  for (const log of reversed) {
+    const top3Names = log.top3.map(s => {
+      const etf = ETFS.find(e => e.sym === s);
+      return `<span class="tag">${etf ? etf.short : s}</span>`;
+    }).join('');
+    let changes = '';
+    if (log.changed) {
+      if (log.exiting.length) {
+        const ex = log.exiting.map(s => { const e = ETFS.find(x=>x.sym===s); return `<span class="badge red">− ${e?.short||s}</span>`; }).join(' ');
+        changes += ex + ' ';
+      }
+      if (log.entering.length) {
+        const en = log.entering.map(s => { const e = ETFS.find(x=>x.sym===s); return `<span class="badge green">+ ${e?.short||s}</span>`; }).join(' ');
+        changes += en;
+      }
+    }
+    html += `<div class="log-row">
+      <div class="log-date">${log.date}</div>
+      <div class="log-body">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="log-holds">${top3Names}</div>
+          ${changes ? `<div style="display:flex;gap:4px;flex-wrap:wrap">${changes}</div>` : ''}
+          ${!log.changed && logs!==changeOnlyLogs ? `<span style="color:var(--muted);font-size:0.75rem">no change</span>` : ''}
+        </div>
+        <div style="color:var(--muted);font-size:0.75rem;margin-top:3px">Portfolio: ₹${(log.capital/1000).toFixed(1)}K</div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('log-container').innerHTML = html;
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='all')||(i===1&&tab==='changes')));
+  renderLog();
+}
+</script>
+
+<!-- Chart.js date adapter -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+</body>
+</html>
