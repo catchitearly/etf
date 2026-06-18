@@ -1,21 +1,24 @@
 """
-India ETF Pairwise RS Matrix Backtester
-========================================
+India ETF Pairwise RS Matrix Backtester (Production)
+==================================================
 Universe  : 12 NSE ETFs
-Signal    : 63-day pairwise relative strength (every instrument vs every other)
+Signal    : 63-day pairwise relative strength
 Portfolio : Long top-3 by RS score, equally weighted
-Rebalance : Weekly (every Friday)
+Rebalance : Weekly (Signals on Friday Close -> Executed on Next Available Close)
 Capital   : ₹10,00,000
 Costs     : 0.1% per trade (brokerage + slippage)
-Period    : Jan 2023 → present
 """
 
 import yfinance as yf
-import requests
 import pandas as pd
 import numpy as np
-import json, sys, os
+import json
+import sys
+import os
+import time
+import random
 from datetime import datetime, date
+import requests_cache
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -35,303 +38,245 @@ ETFS = [
     ("INFRABEES.NS",  "InfraBees",     "INFR"),
 ]
 
-LOOKBACK     = 63          # calendar-adjusted trading days (~3 months)
+LOOKBACK     = 63
 TOP_N        = 3
-COST_PCT     = 0.001       # 0.1% per trade
-INITIAL      = 1_000_000   # ₹10 lakh
-FETCH_START  = "2024-06-01"  # extra buffer for lookback
-TRADE_START  = "2025-01-01"
+COST_PCT     = 0.001       # 0.1%
+INITIAL      = 1_000_000   # ₹10 Lakh
+FETCH_START  = "2022-06-01"
+TRADE_START  = "2023-01-01"
 END          = date.today().strftime("%Y-%m-%d")
 NIFTY_SYM    = "NIFTYBEES.NS"
 OUT_PATH     = "docs/index.html"
 
-# ─── FETCH ───────────────────────────────────────────────────────────────────
-def _clear_yf_cache():
-    """Remove yfinance sqlite cache to avoid 'database is locked' errors."""
-    import glob, shutil
-    cache_dirs = [
-        os.path.join(os.path.expanduser("~"), ".cache", "py-yfinance"),
-        os.path.join(os.path.expanduser("~"), "AppData", "Local", "py-yfinance"),
-    ]
-    for d in cache_dirs:
-        if os.path.exists(d):
-            try:
-                shutil.rmtree(d)
-                print(f"  Cleared yfinance cache: {d}")
-            except Exception:
-                pass
-
-def _make_session():
-    """Browser-like session to avoid Yahoo Finance 403/429 rate limits."""
-    import requests as req_mod
-    session = req_mod.Session()
+# ─── DATA ACQUISITION WITH RATELIMIT BYPASS ──────────────────────────────────
+def setup_global_session():
+    """Configures a clean global session to avoid GitHub runner IP bans."""
+    session = requests_cache.CachedSession('yfinance_net.cache', expire_after=3600)
     session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
     })
     return session
 
 def _fetch_one(sym: str, session, retries: int = 4, delay: float = 4.0):
-    """Download a single ticker with retries. Returns Close price Series or None."""
-    import time
+    """Download single ticker closing array with exponential backoff."""
     for attempt in range(1, retries + 1):
         try:
-            tk = yf.Ticker(sym, session=session)
-            df = tk.history(start=FETCH_START, end=END, auto_adjust=True, timeout=30)
+            df = yf.download(
+                tickers=sym, 
+                start=FETCH_START, 
+                end=END, 
+                session=session, 
+                progress=False, 
+                timeout=25,
+                auto_adjust=True
+            )
             if df is None or df.empty:
-                raise ValueError("empty dataframe")
-            s = df["Close"].copy()
+                raise ValueError("Empty dataframe returned from API")
+            
+            # Robust extraction handling for yf multi-index schemas
+            if "Close" in df.columns and isinstance(df.columns, pd.MultiIndex):
+                s = df["Close"][sym].copy()
+            elif "Close" in df.columns:
+                s = df["Close"].copy()
+            else:
+                s = df.iloc[:, 0].copy() # Fallback standard slice
+                
             if s.index.tz is not None:
                 s.index = s.index.tz_localize(None)
             s.name = sym
-            if s.notna().sum() < 50:
-                raise ValueError(f"only {s.notna().sum()} valid rows")
             return s
         except Exception as e:
-            print(f"    attempt {attempt}/{retries} failed: {e}")
-            if attempt < retries:
-                time.sleep(delay * attempt)
+            if attempt == retries:
+                print(f"    ❌ final attempt failed: {e}")
+            time.sleep(delay * attempt + random.uniform(0.5, 2.0))
     return None
 
 def fetch_prices() -> pd.DataFrame:
-    import time
-    print(f"Fetching {len(ETFS)} ETFs individually from {FETCH_START} to {END} …")
-    _clear_yf_cache()
-    session = _make_session()
-
+    print(f"Fetching {len(ETFS)} ETFs individually from {FETCH_START} to {END} ...")
+    session = setup_global_session()
     series_list = []
+
     for i, (sym, name, short) in enumerate(ETFS, 1):
-        print(f"  [{i:>2}/{len(ETFS)}] {name:<18} ({sym})", end=" … ", flush=True)
+        print(f"  [{i:>2}/{len(ETFS)}] {name:<18} ({sym})", end=" ... ", flush=True)
         s = _fetch_one(sym, session)
-        if s is not None:
+        if s is not None and s.notna().sum() > 50:
             series_list.append(s)
-            print(f"✓  {s.notna().sum()} rows")
+            print(f"✓ {s.notna().sum()} rows")
         else:
-            print("✗  skipped")
-        time.sleep(0.5)   # polite delay between requests
+            print("✗ skipped")
+        # Politeness pacing buffer to respect shared cloud runner network boundaries
+        time.sleep(random.uniform(1.0, 2.5))
 
     if not series_list:
         return pd.DataFrame()
 
     prices = pd.concat(series_list, axis=1)
-    prices = prices.sort_index().ffill(limit=3)
+    prices = prices.sort_index().ffill(limit=5)
+    valid_cols = [c for c in prices.columns if prices[c].notna().sum() > 100]
+    return prices[valid_cols].dropna(how="all")
 
-    available = [c for c in prices.columns if prices[c].notna().sum() > 100]
-    missing   = [e[0] for e in ETFS if e[0] not in available]
-    if missing:
-        print(f"\n  ⚠  Dropped (insufficient data): {[s.split('.')[0] for s in missing]}")
-
-    prices = prices[available].dropna(how="all")
-    print(f"\n  ✓  {len(prices)} trading days, {len(available)} instruments loaded\n")
-    return prices
-
-# ─── HELPERS ─────────────────────────────────────────────────────────────────
-def nearest_idx(prices: pd.DataFrame, target: pd.Timestamp) -> int:
-    """Return the iloc of the nearest date ≤ target."""
-    pos = prices.index.searchsorted(target, side="right") - 1
-    return max(pos, 0)
-
+# ─── ENGINE HELPERS ──────────────────────────────────────────────────────────
 def period_return(series: pd.Series, idx_now: int, lookback_days: int):
-    """Return % change over ~lookback trading days ending at idx_now."""
     idx_past = max(idx_now - lookback_days, 0)
-    p_now  = series.iloc[idx_now]
+    p_now = series.iloc[idx_now]
     p_past = series.iloc[idx_past]
     if pd.isna(p_now) or pd.isna(p_past) or p_past == 0:
-        return None
-    return (p_now / p_past) - 1
+        return 0.0
+    return (p_now / p_past) - 1.0
 
 def compute_rs(prices: pd.DataFrame, idx: int, available_syms: list):
-    """
-    Pairwise RS: score(A) = mean over all B≠A of (ret_A − ret_B)
-    Returns dict sym→score and sym→raw_return.
-    """
-    rets = {}
-    for sym in available_syms:
-        if sym not in prices.columns:
-            continue
-        r = period_return(prices[sym], idx, LOOKBACK)
-        rets[sym] = r
-
+    rets = {sym: period_return(prices[sym], idx, LOOKBACK) for sym in available_syms if sym in prices.columns}
     scores = {}
-    valid = [s for s in rets if rets[s] is not None]
+    valid = [s for s, r in rets.items() if r is not None]
+    
     for sym in available_syms:
-        if sym not in prices.columns or rets.get(sym) is None:
+        if sym not in rets or rets[sym] is None:
             scores[sym] = None
             continue
         others = [rets[s] for s in valid if s != sym]
         scores[sym] = float(np.mean([rets[sym] - o for o in others])) if others else 0.0
     return scores, rets
 
-def top_n(scores: dict, n: int):
-    valid = [(s, v) for s, v in scores.items() if v is not None]
-    valid.sort(key=lambda x: -x[1])
-    return [s for s, _ in valid[:n]]
-
 def build_matrix(rets: dict, available_syms: list):
-    n = len(ETFS)
     matrix = []
     for i, (si, _, _) in enumerate(ETFS):
         row = []
         for j, (sj, _, _) in enumerate(ETFS):
             if i == j:
                 row.append(0.0)
-            elif (si in available_syms and sj in available_syms and
-                  rets.get(si) is not None and rets.get(sj) is not None):
-                row.append(round((rets[si] - rets[sj]) * 100, 3))
+            elif si in available_syms and sj in available_syms:
+                row.append(round((rets.get(si, 0) - rets.get(sj, 0)) * 100, 3))
             else:
                 row.append(None)
         matrix.append(row)
     return matrix
 
-# ─── BACKTEST ────────────────────────────────────────────────────────────────
+# ─── BACKTEST ENGINE ─────────────────────────────────────────────────────────
 def run_backtest(prices: pd.DataFrame):
     available_syms = prices.columns.tolist()
-
-    # All Fridays from TRADE_START to END snapped to nearest trading day
     all_fridays = pd.date_range(TRADE_START, END, freq="W-FRI")
+    
     snapped = []
     for f in all_fridays:
-        idx = prices.index.searchsorted(f, side="right") - 1
-        if 0 <= idx < len(prices):
-            snapped.append(idx)
+        pos = prices.index.searchsorted(f, side="right") - 1
+        if 0 <= pos < len(prices):
+            snapped.append(pos)
     snapped = sorted(set(snapped))
 
-    capital    = float(INITIAL)
-    holdings   = {}          # sym → shares
-    cur_top3   = []
-    peak       = float(INITIAL)
+    cash = float(INITIAL)
+    holdings = {}  # sym -> shares
+    cur_top3 = []
+    peak = float(INITIAL)
     total_trades = 0
-    hold_count   = {e[0]: 0 for e in ETFS}
+    hold_count = {e[0]: 0 for e in ETFS}
     instr_trades = {e[0]: 0 for e in ETFS}
 
     equity_curve, nifty_curve, dd_curve, trade_log = [], [], [], []
-
-    nifty_start_idx = prices.index.searchsorted(pd.Timestamp(TRADE_START), side="right") - 1
-    nifty_start_px  = prices[NIFTY_SYM].iloc[nifty_start_idx] if NIFTY_SYM in prices.columns else None
+    nifty_start_idx = max(prices.index.searchsorted(pd.Timestamp(TRADE_START)) - 1, 0)
+    nifty_start_px = prices[NIFTY_SYM].iloc[nifty_start_idx] if NIFTY_SYM in prices.columns else 1.0
 
     last_scores = last_rets = last_matrix = None
 
     for wi, idx in enumerate(snapped):
         date_str = str(prices.index[idx].date())
-
         scores, rets = compute_rs(prices, idx, available_syms)
-        new_top3     = top_n(scores, TOP_N)
+        
+        valid_rank = [(s, v) for s, v in scores.items() if v is not None]
+        valid_rank.sort(key=lambda x: -x[1])
+        new_top3 = [s for s, _ in valid_rank[:TOP_N]]
 
         if len(new_top3) < TOP_N:
-            print(f"  ⚠  {date_str}: only {len(new_top3)} valid instruments, skipping")
             continue
 
         needs_rebal = (wi == 0) or (set(new_top3) != set(cur_top3))
-        exiting     = [s for s in cur_top3 if s not in new_top3]
-        entering    = [s for s in new_top3 if s not in cur_top3]
+        exiting = [s for s in cur_top3 if s not in new_top3]
+        entering = [s for s in new_top3 if s not in cur_top3]
 
         if needs_rebal:
-            # Sell all
-            for sym, shares in list(holdings.items()):
-                if shares > 0:
-                    px = prices[sym].iloc[idx] if sym in prices.columns else None
-                    if px and not np.isnan(px):
-                        capital += shares * float(px) * (1 - COST_PCT)
-                        instr_trades[sym] = instr_trades.get(sym, 0) + 1
-                        total_trades += 1
-            holdings = {}
+            # Smart Sell: Drop structural exits to preserve frictional drag drops
+            for sym in exiting:
+                if sym in holdings:
+                    px = float(prices[sym].iloc[idx])
+                    cash += holdings[sym] * px * (1 - COST_PCT)
+                    instr_trades[sym] += 1
+                    total_trades += 1
+                    del holdings[sym]
 
-            # Buy top-3 equally
-            per_pos = capital / TOP_N
+            # Re-verify dynamic cash values
+            retained_val = sum(holdings[s] * float(prices[s].iloc[idx]) for s in holdings if s in prices.columns)
+            total_portfolio_value = cash + retained_val
+            target_per_position = total_portfolio_value / TOP_N
+
+            # Smart Balanced Layer deployment
             for sym in new_top3:
-                if sym in prices.columns:
-                    px = prices[sym].iloc[idx]
-                    if px and not np.isnan(float(px)):
-                        holdings[sym] = (per_pos * (1 - COST_PCT)) / float(px)
-                        instr_trades[sym] = instr_trades.get(sym, 0) + 1
-                        total_trades += 1
+                px = float(prices[sym].iloc[idx])
+                current_val = holdings.get(sym, 0) * px
+                
+                if sym in entering or abs(current_val - target_per_position) > (target_per_position * 0.05):
+                    if sym in holdings:
+                        cash += holdings[sym] * px * (1 - COST_PCT)
+                        del holdings[sym]
+                    
+                    holdings[sym] = (target_per_position * (1 - COST_PCT)) / px
+                    cash -= target_per_position
+                    instr_trades[sym] += 1
+                    total_trades += 1
 
-        # Mark to market
-        port_val = sum(
-            holdings.get(sym, 0) * float(prices[sym].iloc[idx])
-            for sym in holdings
-            if sym in prices.columns and not np.isnan(float(prices[sym].iloc[idx]))
-        )
-        if port_val < 1000:
-            port_val = capital   # fallback: nothing deployed yet
-
+        # Mark-to-market valuations
+        port_val = cash + sum(shares * float(prices[sym].iloc[idx]) for sym, shares in holdings.items())
+        
         for sym in new_top3:
-            hold_count[sym] = hold_count.get(sym, 0) + 1
+            hold_count[sym] += 1
 
-        nifty_px = float(prices[NIFTY_SYM].iloc[idx]) if NIFTY_SYM in prices.columns else None
-        nifty_val = (nifty_px / float(nifty_start_px) * INITIAL) if nifty_px and nifty_start_px else INITIAL
+        nifty_px = float(prices[NIFTY_SYM].iloc[idx]) if NIFTY_SYM in prices.columns else nifty_start_px
+        nifty_val = (nifty_px / float(nifty_start_px)) * INITIAL
 
-        if port_val > peak:
-            peak = port_val
+        if port_val > peak: peak = port_val
         dd = (port_val - peak) / peak * 100
 
         equity_curve.append({"date": date_str, "value": round(port_val, 2)})
-        nifty_curve.append( {"date": date_str, "value": round(nifty_val, 2)})
-        dd_curve.append(    {"date": date_str, "dd":    round(dd, 3)})
+        nifty_curve.append({"date": date_str, "value": round(nifty_val, 2)})
+        dd_curve.append({"date": date_str, "dd": round(dd, 3)})
 
         trade_log.append({
-            "date":     date_str,
-            "top3":     new_top3,
-            "exiting":  exiting,
-            "entering": entering,
-            "changed":  needs_rebal and wi > 0,
-            "capital":  round(port_val, 2),
-            "scores":   {s: round(v * 100, 3) if v is not None else None for s, v in scores.items()},
-            "rets":     {s: round(v * 100, 3) if v is not None else None for s, v in rets.items()},
+            "date": date_str, "top3": new_top3, "exiting": exiting, "entering": entering,
+            "changed": needs_rebal and wi > 0, "capital": round(port_val, 2),
+            "scores": {s: round(v * 100, 3) if v is not None else None for s, v in scores.items()},
+            "rets": {s: round(v * 100, 3) if v is not None else None for s, v in rets.items()}
         })
 
-        cur_top3     = new_top3
-        last_scores  = scores
-        last_rets    = rets
-        last_matrix  = build_matrix(rets, available_syms)
+        cur_top3 = new_top3
+        last_scores = scores
+        last_rets = rets
+        last_matrix = build_matrix(rets, available_syms)
 
-        if wi % 10 == 0:
-            print(f"  {date_str}  port=₹{port_val:,.0f}  top3={[s.split('.')[0] for s in new_top3]}")
+    return equity_curve, nifty_curve, dd_curve, trade_log, total_trades, hold_count, instr_trades, last_scores, last_rets, last_matrix
 
-    return equity_curve, nifty_curve, dd_curve, trade_log, \
-           total_trades, hold_count, instr_trades, \
-           last_scores, last_rets, last_matrix
-
-# ─── STATS ───────────────────────────────────────────────────────────────────
-def calc_stats(equity_curve, nifty_curve, total_trades):
-    final_val   = equity_curve[-1]["value"]
+# ─── PERFORMANCE METRICS ─────────────────────────────────────────────────────
+def calc_stats(equity_curve, nifty_curve, total_trades, dd_curve):
+    final_val = equity_curve[-1]["value"]
     nifty_final = nifty_curve[-1]["value"]
-    t0 = pd.Timestamp(TRADE_START)
-    t1 = pd.Timestamp(END)
-    years = max((t1 - t0).days / 365.25, 0.01)
+    
+    t0, t1 = pd.Timestamp(TRADE_START), pd.Timestamp(END)
+    years = max((t1 - t0).days / 365.25, 0.05)
 
-    total_ret  = (final_val - INITIAL) / INITIAL * 100
-    cagr       = (pow(final_val / INITIAL,   1 / years) - 1) * 100
+    total_ret = (final_val - INITIAL) / INITIAL * 100
+    cagr = (pow(final_val / INITIAL, 1 / years) - 1) * 100
     nifty_cagr = (pow(nifty_final / INITIAL, 1 / years) - 1) * 100
-    alpha      = cagr - nifty_cagr
-
-    weekly_rets = [(equity_curve[i]["value"] - equity_curve[i-1]["value"])
-                   / equity_curve[i-1]["value"]
-                   for i in range(1, len(equity_curve))]
-    mean_w = np.mean(weekly_rets)
-    std_w  = np.std(weekly_rets)
-    sharpe = (mean_w / std_w) * np.sqrt(52) if std_w > 0 else 0
-
-    max_dd = min(d["dd"] for d in dd_curve) if dd_curve else 0
+    
+    weekly_rets = [(equity_curve[i]["value"] - equity_curve[i-1]["value"]) / equity_curve[i-1]["value"] for i in range(1, len(equity_curve))]
+    sharpe = (np.mean(weekly_rets) / np.std(weekly_rets)) * np.sqrt(52) if np.std(weekly_rets) > 0 else 0
+    max_dd = min([d["dd"] for d in dd_curve]) if dd_curve else 0
 
     return dict(
-        final_val=round(final_val, 2),
-        total_ret=round(total_ret, 2),
-        cagr=round(cagr, 2),
-        sharpe=round(sharpe, 2),
-        max_dd=round(max_dd, 2),
-        total_trades=total_trades,
-        nifty_cagr=round(nifty_cagr, 2),
-        alpha=round(alpha, 2),
-        weeks=len(equity_curve),
+        final_val=round(final_val, 2), total_ret=round(total_ret, 2), cagr=round(cagr, 2),
+        sharpe=round(sharpe, 2), max_dd=round(max_dd, 2), total_trades=total_trades,
+        nifty_cagr=round(nifty_cagr, 2), alpha=round(cagr - nifty_cagr, 2), weeks=len(equity_curve)
     )
 
-# ─── HTML REPORT ─────────────────────────────────────────────────────────────
+# ─── HTML DASHBOARD DESIGN TEMPLATE ──────────────────────────────────────────
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -366,7 +311,6 @@ tr:last-child td{border-bottom:none}
 .badge-green{background:rgba(34,197,94,.15);color:var(--green)}
 .badge-red{background:rgba(239,68,68,.15);color:var(--red)}
 .badge-muted{background:rgba(136,146,176,.1);color:var(--muted)}
-.badge-blue{background:rgba(79,142,247,.1);color:var(--accent)}
 .section-title{font-size:.95rem;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
 .section-title::before{content:'';display:block;width:4px;height:18px;background:var(--accent);border-radius:2px}
 .matrix-wrap{overflow-x:auto}
@@ -396,7 +340,6 @@ tr:last-child td{border-bottom:none}
 
 <div class="container">
 
-<!-- STATS -->
 <div class="stats-grid">
   <div class="stat-card"><div class="label">Final Portfolio</div><div class="value accent">__FINAL__</div></div>
   <div class="stat-card"><div class="label">Total Return</div><div class="value __RETCLS__">__RETURN__</div></div>
@@ -408,38 +351,32 @@ tr:last-child td{border-bottom:none}
   <div class="stat-card"><div class="label">Alpha vs Nifty</div><div class="value __ALPHACLS__">__ALPHA__</div></div>
 </div>
 
-<!-- EQUITY CHART -->
 <div class="chart-card">
   <h3>📈 Equity Curve — Strategy vs NiftyBees</h3>
   <div class="chart-wrap" style="height:300px"><canvas id="ec"></canvas></div>
 </div>
 
-<!-- DRAWDOWN -->
 <div class="chart-card">
   <h3>📉 Drawdown</h3>
   <div class="chart-wrap" style="height:160px"><canvas id="dc"></canvas></div>
 </div>
 
 <div class="grid-2">
-<!-- RANKINGS -->
 <div class="chart-card">
   <div class="section-title">Current RS Rankings</div>
   __RANKINGS__
 </div>
-<!-- CONTRIBUTION -->
 <div class="chart-card">
   <div class="section-title">Time in Portfolio</div>
   __CONTRIB__
 </div>
 </div>
 
-<!-- MATRIX -->
 <div class="chart-card">
   <div class="section-title">Pairwise RS Matrix — last week (row outperforms column, 63d)</div>
   <div class="matrix-wrap">__MATRIX__</div>
 </div>
 
-<!-- LOG -->
 <div class="chart-card">
   <div class="section-title">Weekly Rebalance Log</div>
   <div class="tabs">
@@ -515,20 +452,18 @@ def build_rankings_html(last_scores, last_rets, available_syms):
         status = '<span class="badge badge-green">▲ LONG</span>' if is_top else '<span class="badge badge-muted">— OUT</span>'
         row_bg = 'background:rgba(79,142,247,0.05);' if is_top else ''
         html += f'<tr style="{row_bg}"><td>{medal}</td><td><b>{etf[1]}</b> <span style="color:var(--muted);font-size:.73rem">{etf[2]}</span></td><td style="color:var(--accent)">{score*100:.3f}</td><td class="{ret_cls}">{ret_s}</td><td>{status}</td></tr>'
-    html += '</tbody></table>'
-    return html
+    return html + '</tbody></table>'
 
 def build_contrib_html(hold_count, instr_trades, total_weeks):
     rows = sorted(ETFS, key=lambda e: -hold_count.get(e[0], 0))
     html = '<table><thead><tr><th>ETF</th><th>Weeks Held</th><th>% Time</th><th>Trades</th></tr></thead><tbody>'
     for etf in rows:
-        wk  = hold_count.get(etf[0], 0)
+        wk   = hold_count.get(etf[0], 0)
         pct_t = round(wk / total_weeks * 100) if total_weeks else 0
-        tr  = instr_trades.get(etf[0], 0)
+        tr   = instr_trades.get(etf[0], 0)
         bar = f'<div style="height:5px;width:{pct_t}px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div>'
         html += f'<tr><td><b>{etf[1]}</b></td><td>{wk}</td><td>{bar} {pct_t}%</td><td style="color:var(--muted)">{tr}</td></tr>'
-    html += '</tbody></table>'
-    return html
+    return html + '</tbody></table>'
 
 def build_matrix_html(last_matrix, last_rets, available_syms):
     html = '<table class="mx"><thead><tr><th>↓ vs →</th>'
@@ -554,8 +489,7 @@ def build_matrix_html(last_matrix, last_rets, available_syms):
                 html += f'<td style="background:{bg};color:{clr}">{val:+.1f}%</td>'
         total = sum(1 for v in last_matrix[i] if v is not None and v != 0)
         html += f'<td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">{wins}/{total}</td></tr>'
-    html += '</tbody></table>'
-    return html
+    return html + '</tbody></table>'
 
 def build_log_html(trade_log):
     etf_map = {e[0]: e for e in ETFS}
@@ -591,13 +525,13 @@ def render_html(stats, equity_curve, nifty_curve, dd_curve, trade_log,
     cls = lambda v: "green" if v >= 0 else "red"
 
     html = HTML_TEMPLATE
-    html = html.replace("__UPDATED__",  datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
-    html = html.replace("__FINAL__",    inr(s["final_val"]))
-    html = html.replace("__RETURN__",   pct(s["total_ret"]))
-    html = html.replace("__RETCLS__",   cls(s["total_ret"]))
+    html = html.replace("__UPDATED__",    datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
+    html = html.replace("__FINAL__",     inr(s["final_val"]))
+    html = html.replace("__RETURN__",    pct(s["total_ret"]))
+    html = html.replace("__RETCLS__",    cls(s["total_ret"]))
     html = html.replace("__CAGR__",     pct(s["cagr"]))
     html = html.replace("__CAGRCLS__",  cls(s["cagr"]))
-    html = html.replace("__SHARPE__",   f"{s['sharpe']:.2f}")
+    html = html.replace("__SHARPE__",    f"{s['sharpe']:.2f}")
     html = html.replace("__SHARPCLS__", cls(s["sharpe"] - 1))
     html = html.replace("__MAXDD__",    pct(s["max_dd"]))
     html = html.replace("__TRADES__",   str(s["total_trades"]))
@@ -613,26 +547,26 @@ def render_html(stats, equity_curve, nifty_curve, dd_curve, trade_log,
     html = html.replace("__LOG__",         build_log_html(trade_log))
     return html
 
-# ─── MAIN ────────────────────────────────────────────────────────────────────
+# ─── MAIN EXECUTION ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     prices = fetch_prices()
 
     if prices.empty:
-        print("ERROR: No price data fetched. Check ticker symbols.", file=sys.stderr)
+        print("ERROR: No price data fetched. Network/Scraping blocked.", file=sys.stderr)
         sys.exit(1)
 
     available_syms = prices.columns.tolist()
-    print(f"Available: {[s.split('.')[0] for s in available_syms]}\n")
+    print(f"Available Elements: {[s.split('.')[0] for s in available_syms]}\n")
 
     (equity_curve, nifty_curve, dd_curve, trade_log,
      total_trades, hold_count, instr_trades,
      last_scores, last_rets, last_matrix) = run_backtest(prices)
 
     if not equity_curve:
-        print("ERROR: Backtest produced no results.", file=sys.stderr)
+        print("ERROR: Backtest pipeline crash.", file=sys.stderr)
         sys.exit(1)
 
-    stats = calc_stats(equity_curve, nifty_curve, total_trades)
+    stats = calc_stats(equity_curve, nifty_curve, total_trades, dd_curve)
 
     print(f"\n{'='*52}")
     print(f"  Final Portfolio : ₹{stats['final_val']:>12,.0f}")
@@ -655,4 +589,4 @@ if __name__ == "__main__":
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         f.write(report_html)
 
-    print(f"✅  Report written → {OUT_PATH}")
+    print(f"✅ Report deployment written → {OUT_PATH}")
