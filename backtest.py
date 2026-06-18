@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 ETFS = [
     ("GOLDBEES.NS",   "GoldBees",      "GOLD"),
     ("SILVERBEES.NS", "SilverBees",    "SILV"),
-    ("GSCOMP.NS",     "GS Composite",  "GSCP"),
+    ("NIFTYGSCOMPOSITE.NS",     "GS Composite",  "GSCP"),
     ("NIFTYBEES.NS",  "NiftyBees",     "NFTY"),
     ("JUNIORBEES.NS", "JuniorBees",    "JNBR"),
     ("BANKBEES.NS",   "BankBees",      "BANK"),
