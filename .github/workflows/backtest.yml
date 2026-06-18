@@ -1,42 +1,49 @@
-name: ETF RS Backtest
+name: Run ETF Matrix Backtest
 
 on:
   schedule:
-    - cron: '0 4 * * 5'   # Every Friday at 4:00 AM UTC (9:30 AM IST after market open)
-  workflow_dispatch:        # Manual trigger from GitHub UI
+    # Runs at 16:30 IST (11:00 UTC) every Friday after Indian markets close
+    - cron: '0 11 * * 5'
+  workflow_dispatch:
 
 permissions:
-  contents: write           # needed to commit docs/index.html back to repo
+  contents: write
 
 jobs:
   backtest:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    - name: Set up Python
+      uses: actions/platform-samples/actions/setup-python@v5
+      with:
+        python-name: '3.10'
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+    - name: Set up Request Cache Paths
+      uses: actions/cache@v4
+      with:
+        path: .cache/yfinance_net.cache
+        key: ${{ runner.os }}-yf-cache-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}-yf-cache-
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+    - name: Force Clean Modern Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip uninstall yfinance pandas-datareader requests -y
+        pip install --no-cache-dir yfinance pandas requests requests-cache numpy dateutils
 
-      - name: Run backtest and generate report
-        run: python backtest.py
+    - name: Run Backtest Script
+      run: python backtest.py
 
-      - name: Commit and push report
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/index.html
-          git diff --cached --quiet || git commit -m "backtest: update report $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git push
+    - name: Commit and Push Dashboard Update
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add docs/index.html
+        # Only commit if the dashboard file actually changed
+        git diff-index --quiet HEAD || git commit -m "Automated Dashboard Refresh: $(date -u +'%Y-%m-%d %H:%M') UTC"
+        git push
