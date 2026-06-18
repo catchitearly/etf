@@ -18,9 +18,9 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/platform-samples/actions/setup-python@v5
+      uses: actions/setup-python@v5
       with:
-        python-name: '3.10'
+        python-version: '3.10'
 
     - name: Set up Request Cache Paths
       uses: actions/cache@v4
@@ -34,7 +34,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip uninstall yfinance pandas-datareader requests -y
-        pip install --no-cache-dir yfinance pandas requests requests-cache numpy dateutils
+        pip install --no-cache-dir yfinance pandas requests requests-cache numpy
 
     - name: Run Backtest Script
       run: python backtest.py
