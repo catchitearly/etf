@@ -35,6 +35,14 @@ jobs:
         python -m pip install --upgrade pip
         pip uninstall yfinance pandas-datareader requests -y
         pip install --no-cache-dir yfinance pandas requests requests-cache numpy
+        
+    - name: Set up Request Cache Paths
+      uses: actions/cache@v4
+      with:
+        path: .cache/yfinance_data
+        key: ${{ runner.os }}-yf-csv-cache-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}-yf-csv-cache-
 
     - name: Run Backtest Script
       run: python backtest.py
