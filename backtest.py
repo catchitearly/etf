@@ -11,6 +11,7 @@ Period    : Jan 2023 → present
 """
 
 import yfinance as yf
+import requests
 import pandas as pd
 import numpy as np
 import json, sys, os
@@ -38,36 +39,95 @@ LOOKBACK     = 63          # calendar-adjusted trading days (~3 months)
 TOP_N        = 3
 COST_PCT     = 0.001       # 0.1% per trade
 INITIAL      = 1_000_000   # ₹10 lakh
-FETCH_START  = "2024-06-01"  # extra buffer for lookback
-TRADE_START  = "2026-01-01"
+FETCH_START  = "2022-06-01"  # extra buffer for lookback
+TRADE_START  = "2023-01-01"
 END          = date.today().strftime("%Y-%m-%d")
 NIFTY_SYM    = "NIFTYBEES.NS"
 OUT_PATH     = "docs/index.html"
 
 # ─── FETCH ───────────────────────────────────────────────────────────────────
+def _clear_yf_cache():
+    """Remove yfinance sqlite cache to avoid 'database is locked' errors."""
+    import glob, shutil
+    cache_dirs = [
+        os.path.join(os.path.expanduser("~"), ".cache", "py-yfinance"),
+        os.path.join(os.path.expanduser("~"), "AppData", "Local", "py-yfinance"),
+    ]
+    for d in cache_dirs:
+        if os.path.exists(d):
+            try:
+                shutil.rmtree(d)
+                print(f"  Cleared yfinance cache: {d}")
+            except Exception:
+                pass
+
+def _make_session():
+    """Browser-like session to avoid Yahoo Finance 403/429 rate limits."""
+    import requests as req_mod
+    session = req_mod.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    })
+    return session
+
+def _fetch_one(sym: str, session, retries: int = 4, delay: float = 4.0):
+    """Download a single ticker with retries. Returns Close price Series or None."""
+    import time
+    for attempt in range(1, retries + 1):
+        try:
+            tk = yf.Ticker(sym, session=session)
+            df = tk.history(start=FETCH_START, end=END, auto_adjust=True, timeout=30)
+            if df is None or df.empty:
+                raise ValueError("empty dataframe")
+            s = df["Close"].copy()
+            if s.index.tz is not None:
+                s.index = s.index.tz_localize(None)
+            s.name = sym
+            if s.notna().sum() < 50:
+                raise ValueError(f"only {s.notna().sum()} valid rows")
+            return s
+        except Exception as e:
+            print(f"    attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                time.sleep(delay * attempt)
+    return None
+
 def fetch_prices() -> pd.DataFrame:
-    print(f"Fetching {len(ETFS)} ETFs from {FETCH_START} to {END} …")
-    syms = [e[0] for e in ETFS]
+    import time
+    print(f"Fetching {len(ETFS)} ETFs individually from {FETCH_START} to {END} …")
+    _clear_yf_cache()
+    session = _make_session()
 
-    # Download in one batch; retry individually if batch partially fails
-    raw = yf.download(syms, start=FETCH_START, end=END,
-                      auto_adjust=True, progress=True, threads=True)
+    series_list = []
+    for i, (sym, name, short) in enumerate(ETFS, 1):
+        print(f"  [{i:>2}/{len(ETFS)}] {name:<18} ({sym})", end=" … ", flush=True)
+        s = _fetch_one(sym, session)
+        if s is not None:
+            series_list.append(s)
+            print(f"✓  {s.notna().sum()} rows")
+        else:
+            print("✗  skipped")
+        time.sleep(0.5)   # polite delay between requests
 
-    if isinstance(raw.columns, pd.MultiIndex):
-        prices = raw["Close"]
-    else:
-        prices = raw  # single ticker fallback
+    if not series_list:
+        return pd.DataFrame()
 
-    # Forward-fill weekends / holidays (max 3 days)
-    prices = prices.ffill(limit=3)
+    prices = pd.concat(series_list, axis=1)
+    prices = prices.sort_index().ffill(limit=3)
 
-    available = prices.columns[prices.notna().sum() > 100].tolist()
-    missing   = [s for s in syms if s not in available]
+    available = [c for c in prices.columns if prices[c].notna().sum() > 100]
+    missing   = [e[0] for e in ETFS if e[0] not in available]
     if missing:
-        print(f"  ⚠  Dropped (insufficient data): {missing}")
+        print(f"\n  ⚠  Dropped (insufficient data): {[s.split('.')[0] for s in missing]}")
 
     prices = prices[available].dropna(how="all")
-    print(f"  ✓  {len(prices)} trading days, {len(available)} instruments")
+    print(f"\n  ✓  {len(prices)} trading days, {len(available)} instruments loaded\n")
     return prices
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
