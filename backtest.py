@@ -59,15 +59,33 @@ def setup_global_session():
     })
     return session
 
-def _fetch_one(sym: str, session, retries: int = 4, delay: float = 4.0):
-    """Download single ticker closing array with exponential backoff."""
+# ─── DATA ACQUISITION WITH LOCAL STORAGE CACHING ────────────────────────────
+CACHE_DIR = ".cache/yfinance_data"
+
+def _fetch_one(sym: str, retries: int = 4, delay: float = 4.0):
+    """Download single ticker closing array with a direct local file system cache layer."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(CACHE_DIR, f"{sym}_{FETCH_START}_{END}.csv")
+    
+    # 1. Look in local file system cache first
+    if os.path.exists(cache_path):
+        try:
+            # Verify file isn't empty or corrupted
+            df_cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+            if not df_cached.empty:
+                s = df_cached.iloc[:, 0].copy()
+                s.name = sym
+                return s
+        except Exception:
+            pass # Stale or broken file, fallback to network download
+
+    # 2. Network Download via yfinance native engine (No custom session overrides)
     for attempt in range(1, retries + 1):
         try:
             df = yf.download(
                 tickers=sym, 
                 start=FETCH_START, 
                 end=END, 
-                session=session, 
                 progress=False, 
                 timeout=25,
                 auto_adjust=True
@@ -75,18 +93,22 @@ def _fetch_one(sym: str, session, retries: int = 4, delay: float = 4.0):
             if df is None or df.empty:
                 raise ValueError("Empty dataframe returned from API")
             
-            # Robust extraction handling for yf multi-index schemas
+            # Extract closing array structural variations cleanly
             if "Close" in df.columns and isinstance(df.columns, pd.MultiIndex):
                 s = df["Close"][sym].copy()
             elif "Close" in df.columns:
                 s = df["Close"].copy()
             else:
-                s = df.iloc[:, 0].copy() # Fallback standard slice
+                s = df.iloc[:, 0].copy()
                 
             if s.index.tz is not None:
                 s.index = s.index.tz_localize(None)
             s.name = sym
+
+            # Save valid data straight to the workflow run cache directory
+            s.to_csv(cache_path)
             return s
+
         except Exception as e:
             if attempt == retries:
                 print(f"    ❌ final attempt failed: {e}")
@@ -95,19 +117,17 @@ def _fetch_one(sym: str, session, retries: int = 4, delay: float = 4.0):
 
 def fetch_prices() -> pd.DataFrame:
     print(f"Fetching {len(ETFS)} ETFs individually from {FETCH_START} to {END} ...")
-    session = setup_global_session()
     series_list = []
 
     for i, (sym, name, short) in enumerate(ETFS, 1):
         print(f"  [{i:>2}/{len(ETFS)}] {name:<18} ({sym})", end=" ... ", flush=True)
-        s = _fetch_one(sym, session)
+        s = _fetch_one(sym) # No session object passed downstream
         if s is not None and s.notna().sum() > 50:
             series_list.append(s)
             print(f"✓ {s.notna().sum()} rows")
         else:
             print("✗ skipped")
-        # Politeness pacing buffer to respect shared cloud runner network boundaries
-        time.sleep(random.uniform(1.0, 2.5))
+        time.sleep(random.uniform(1.0, 2.0))
 
     if not series_list:
         return pd.DataFrame()
