@@ -1,10 +1,1413 @@
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"/><title>ETF RS Backtest</title>
-<style>body{background:#0f1117;color:#8892b0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center}</style>
-</head><body>
-<div>
-  <h2 style="color:#4f8ef7;margin-bottom:12px">🇮🇳 India ETF RS Backtest</h2>
-  <p>Report not yet generated.</p>
-  <p style="margin-top:8px">Go to <b>Actions → ETF RS Backtest → Run workflow</b> to generate the first report.</p>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>India ETF RS Backtest</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--card2:#22263a;--border:#2e3250;--accent:#4f8ef7;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--text:#e2e8f0;--muted:#8892b0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+header h1{font-size:1.25rem;font-weight:700;color:var(--accent)}
+header .meta{color:var(--muted);font-size:0.82rem}
+.container{max-width:1400px;margin:0 auto;padding:24px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:14px;margin-bottom:24px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+.stat-card .label{font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.stat-card .value{font-size:1.45rem;font-weight:700}
+.green{color:var(--green)}.red{color:var(--red)}.accent{color:var(--accent)}.yellow{color:var(--yellow)}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:22px}
+.chart-card h3{font-size:0.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px}
+.chart-wrap{position:relative}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-bottom:22px}
+@media(max-width:800px){.grid-2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:0.84rem}
+th{background:var(--card2);color:var(--muted);font-weight:600;text-transform:uppercase;font-size:0.7rem;letter-spacing:.05em;padding:9px 12px;text-align:left;border-bottom:1px solid var(--border)}
+td{padding:8px 12px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.73rem;font-weight:600}
+.badge-green{background:rgba(34,197,94,.15);color:var(--green)}
+.badge-red{background:rgba(239,68,68,.15);color:var(--red)}
+.badge-muted{background:rgba(136,146,176,.1);color:var(--muted)}
+.section-title{font-size:.95rem;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.section-title::before{content:'';display:block;width:4px;height:18px;background:var(--accent);border-radius:2px}
+.matrix-wrap{overflow-x:auto}
+.mx{border-collapse:collapse;font-size:.72rem;white-space:nowrap}
+.mx th,.mx td{padding:5px 7px;border:1px solid var(--border);text-align:center;min-width:54px}
+.mx th{background:var(--card2);color:var(--muted);font-weight:600}
+.mx .rl{font-weight:600;color:var(--text);background:var(--card2);text-align:left;padding-left:10px}
+.tag{display:inline-flex;align-items:center;background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:5px;padding:2px 9px;font-size:.78rem;font-weight:600;margin:2px}
+.tabs{display:flex;gap:4px;background:var(--card2);padding:4px;border-radius:8px;width:fit-content;margin-bottom:16px}
+.tab{padding:6px 16px;border-radius:6px;cursor:pointer;font-size:.83rem;font-weight:500;color:var(--muted);transition:all .15s}
+.tab.active{background:var(--accent);color:#fff}
+#log{max-height:420px;overflow-y:auto}
+.lr{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:.81rem;align-items:flex-start}
+.ld{color:var(--muted);min-width:92px}
+.lb{flex:1}
+.updated{text-align:right;color:var(--muted);font-size:.78rem;padding:10px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🇮🇳 India ETF — Pairwise RS Matrix Backtest</h1>
+    <div class="meta">12 ETFs · 63-day RS · Weekly Rebalance · Top-3 Long · ₹10L · Jan 2023 → present</div>
+  </div>
+  <div class="meta">Updated: 2026-06-18 10:52 UTC</div>
+</header>
+
+<div class="container">
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="label">Final Portfolio</div><div class="value accent">₹22.30L</div></div>
+  <div class="stat-card"><div class="label">Total Return</div><div class="value green">+123.0%</div></div>
+  <div class="stat-card"><div class="label">CAGR</div><div class="value green">+26.1%</div></div>
+  <div class="stat-card"><div class="label">Sharpe Ratio</div><div class="value green">1.39</div></div>
+  <div class="stat-card"><div class="label">Max Drawdown</div><div class="value red">-17.1%</div></div>
+  <div class="stat-card"><div class="label">Total Trades</div><div class="value">192</div></div>
+  <div class="stat-card"><div class="label">Nifty CAGR</div><div class="value">+9.1%</div></div>
+  <div class="stat-card"><div class="label">Alpha vs Nifty</div><div class="value green">+17.0%</div></div>
 </div>
-</body></html>
+
+<div class="chart-card">
+  <h3>📈 Equity Curve — Strategy vs NiftyBees</h3>
+  <div class="chart-wrap" style="height:300px"><canvas id="ec"></canvas></div>
+</div>
+
+<div class="chart-card">
+  <h3>📉 Drawdown</h3>
+  <div class="chart-wrap" style="height:160px"><canvas id="dc"></canvas></div>
+</div>
+
+<div class="grid-2">
+<div class="chart-card">
+  <div class="section-title">Current RS Rankings</div>
+  <table><thead><tr><th>Rank</th><th>ETF</th><th>RS Score</th><th>63d Return</th><th>Signal</th></tr></thead><tbody><tr style="background:rgba(79,142,247,0.05);"><td>🥇</td><td><b>Momentum100</b> <span style="color:var(--muted);font-size:.73rem">MOM</span></td><td style="color:var(--accent)">8.132</td><td class="green">+7.4%</td><td><span class="badge badge-green">▲ LONG</span></td></tr><tr style="background:rgba(79,142,247,0.05);"><td>🥈</td><td><b>JuniorBees</b> <span style="color:var(--muted);font-size:.73rem">JNBR</span></td><td style="color:var(--accent)">5.920</td><td class="green">+5.5%</td><td><span class="badge badge-green">▲ LONG</span></td></tr><tr style="background:rgba(79,142,247,0.05);"><td>🥉</td><td><b>PharmaBees</b> <span style="color:var(--muted);font-size:.73rem">PHRM</span></td><td style="color:var(--accent)">4.532</td><td class="green">+4.2%</td><td><span class="badge badge-green">▲ LONG</span></td></tr><tr style=""><td>4</td><td><b>InfraBees</b> <span style="color:var(--muted);font-size:.73rem">INFR</span></td><td style="color:var(--accent)">2.159</td><td class="green">+2.1%</td><td><span class="badge badge-muted">— OUT</span></td></tr><tr style=""><td>5</td><td><b>BankBees</b> <span style="color:var(--muted);font-size:.73rem">BANK</span></td><td style="color:var(--accent)">1.648</td><td class="green">+1.6%</td><td><span class="badge badge-muted">— OUT</span></td></tr><tr style=""><td>6</td><td><b>AutoBees</b> <span style="color:var(--muted);font-size:.73rem">AUTO</span></td><td style="color:var(--accent)">1.455</td><td class="green">+1.4%</td><td><span class="badge badge-muted">— OUT</span></td></tr><tr style=""><td>7</td><td><b>NiftyBees</b> <span style="color:var(--muted);font-size:.73rem">NFTY</span></td><td style="color:var(--accent)">-1.253</td><td class="red">-1.0%</td><td><span class="badge badge-muted">— OUT</span></td></tr><tr style=""><td>8</td><td><b>PSUBankBees</b> <span style="color:var(--muted);font-size:.73rem">PSUB</span></td><td style="color:var(--accent)">-3.590</td><td class="red">-3.1%</td><td><span class="badge badge-muted">— OUT</span></td></tr><tr style=""><td>9</td><td><b>GoldBees</b> <span style="color:var(--muted);font-size:.73rem">GOLD</span></td><td style="color:var(--accent)">-9.178</td><td class="red">-8.1%</td><td><span class="badge badge-muted">— OUT</span></td></tr><tr style=""><td>10</td><td><b>SilverBees</b> <span style="color:var(--muted);font-size:.73rem">SILV</span></td><td style="color:var(--accent)">-9.825</td><td class="red">-8.7%</td><td><span class="badge badge-muted">— OUT</span></td></tr></tbody></table>
+</div>
+<div class="chart-card">
+  <div class="section-title">Time in Portfolio</div>
+  <table><thead><tr><th>ETF</th><th>Weeks Held</th><th>% Time</th><th>Trades</th></tr></thead><tbody><tr><td><b>SilverBees</b></td><td>96</td><td><div style="height:5px;width:53px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 53%</td><td style="color:var(--muted)">23</td></tr><tr><td><b>GoldBees</b></td><td>92</td><td><div style="height:5px;width:51px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 51%</td><td style="color:var(--muted)">26</td></tr><tr><td><b>PSUBankBees</b></td><td>83</td><td><div style="height:5px;width:46px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 46%</td><td style="color:var(--muted)">27</td></tr><tr><td><b>AutoBees</b></td><td>66</td><td><div style="height:5px;width:37px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 37%</td><td style="color:var(--muted)">26</td></tr><tr><td><b>Momentum100</b></td><td>63</td><td><div style="height:5px;width:35px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 35%</td><td style="color:var(--muted)">22</td></tr><tr><td><b>PharmaBees</b></td><td>45</td><td><div style="height:5px;width:25px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 25%</td><td style="color:var(--muted)">17</td></tr><tr><td><b>JuniorBees</b></td><td>43</td><td><div style="height:5px;width:24px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 24%</td><td style="color:var(--muted)">19</td></tr><tr><td><b>InfraBees</b></td><td>22</td><td><div style="height:5px;width:12px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 12%</td><td style="color:var(--muted)">10</td></tr><tr><td><b>BankBees</b></td><td>21</td><td><div style="height:5px;width:12px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 12%</td><td style="color:var(--muted)">14</td></tr><tr><td><b>NiftyBees</b></td><td>9</td><td><div style="height:5px;width:5px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 5%</td><td style="color:var(--muted)">8</td></tr><tr><td><b>GS Composite</b></td><td>0</td><td><div style="height:5px;width:0px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 0%</td><td style="color:var(--muted)">0</td></tr><tr><td><b>ITBees</b></td><td>0</td><td><div style="height:5px;width:0px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div> 0%</td><td style="color:var(--muted)">0</td></tr></tbody></table>
+</div>
+</div>
+
+<div class="chart-card">
+  <div class="section-title">Pairwise RS Matrix — last week (row outperforms column, 63d)</div>
+  <div class="matrix-wrap"><table class="mx"><thead><tr><th>↓ vs →</th><th>GOLD</th><th>SILV</th><th>GSCP</th><th>NFTY</th><th>JNBR</th><th>BANK</th><th>ITMC</th><th>PSUB</th><th>PHRM</th><th>AUTO</th><th>MOM</th><th>INFR</th><th style="background:rgba(79,142,247,.1);color:var(--accent)">Wins</th></tr></thead><tbody><tr><td class="rl">GOLD</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(34,197,94,0.06);color:#22c55e">+0.6%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(239,68,68,0.71);color:#ef4444">-7.1%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-13.6%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-9.7%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(239,68,68,0.50);color:#ef4444">-5.0%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-12.3%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-9.6%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-15.6%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-10.2%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">1/9</td></tr><tr><td class="rl">SILV</td><td style="background:rgba(239,68,68,0.06);color:#ef4444">-0.6%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-7.7%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-14.2%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-10.3%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(239,68,68,0.56);color:#ef4444">-5.6%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-12.9%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-10.2%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-16.2%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-10.8%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">0/9</td></tr><tr><td class="rl">NFTY</td><td style="background:rgba(34,197,94,0.71);color:#22c55e">+7.1%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+7.7%</td><td style="color:var(--muted)">N/A</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(239,68,68,0.65);color:#ef4444">-6.5%</td><td style="background:rgba(239,68,68,0.26);color:#ef4444">-2.6%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.21);color:#22c55e">+2.1%</td><td style="background:rgba(239,68,68,0.52);color:#ef4444">-5.2%</td><td style="background:rgba(239,68,68,0.24);color:#ef4444">-2.4%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-8.4%</td><td style="background:rgba(239,68,68,0.31);color:#ef4444">-3.1%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">3/9</td></tr><tr><td class="rl">JNBR</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+13.6%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+14.2%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.65);color:#22c55e">+6.5%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(34,197,94,0.38);color:#22c55e">+3.8%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+8.6%</td><td style="background:rgba(34,197,94,0.12);color:#22c55e">+1.2%</td><td style="background:rgba(34,197,94,0.40);color:#22c55e">+4.0%</td><td style="background:rgba(239,68,68,0.20);color:#ef4444">-2.0%</td><td style="background:rgba(34,197,94,0.34);color:#22c55e">+3.4%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">8/9</td></tr><tr><td class="rl">BANK</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+9.7%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+10.3%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.26);color:#22c55e">+2.6%</td><td style="background:rgba(239,68,68,0.38);color:#ef4444">-3.8%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.47);color:#22c55e">+4.7%</td><td style="background:rgba(239,68,68,0.26);color:#ef4444">-2.6%</td><td style="background:rgba(34,197,94,0.02);color:#22c55e">+0.2%</td><td style="background:rgba(239,68,68,0.58);color:#ef4444">-5.8%</td><td style="background:rgba(239,68,68,0.05);color:#ef4444">-0.5%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">5/9</td></tr><tr><td class="rl">PSUB</td><td style="background:rgba(34,197,94,0.50);color:#22c55e">+5.0%</td><td style="background:rgba(34,197,94,0.56);color:#22c55e">+5.6%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(239,68,68,0.21);color:#ef4444">-2.1%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-8.6%</td><td style="background:rgba(239,68,68,0.47);color:#ef4444">-4.7%</td><td style="color:var(--muted)">N/A</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(239,68,68,0.73);color:#ef4444">-7.3%</td><td style="background:rgba(239,68,68,0.45);color:#ef4444">-4.5%</td><td style="background:rgba(239,68,68,0.75);color:#ef4444">-10.6%</td><td style="background:rgba(239,68,68,0.52);color:#ef4444">-5.2%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">2/9</td></tr><tr><td class="rl">PHRM</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+12.3%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+12.9%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.52);color:#22c55e">+5.2%</td><td style="background:rgba(239,68,68,0.12);color:#ef4444">-1.2%</td><td style="background:rgba(34,197,94,0.26);color:#22c55e">+2.6%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.73);color:#22c55e">+7.3%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(34,197,94,0.28);color:#22c55e">+2.8%</td><td style="background:rgba(239,68,68,0.32);color:#ef4444">-3.2%</td><td style="background:rgba(34,197,94,0.21);color:#22c55e">+2.1%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">7/9</td></tr><tr><td class="rl">AUTO</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+9.6%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+10.2%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.24);color:#22c55e">+2.4%</td><td style="background:rgba(239,68,68,0.40);color:#ef4444">-4.0%</td><td style="background:rgba(239,68,68,0.02);color:#ef4444">-0.2%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.45);color:#22c55e">+4.5%</td><td style="background:rgba(239,68,68,0.28);color:#ef4444">-2.8%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(239,68,68,0.60);color:#ef4444">-6.0%</td><td style="background:rgba(239,68,68,0.06);color:#ef4444">-0.6%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">4/9</td></tr><tr><td class="rl">MOM</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+15.6%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+16.2%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+8.4%</td><td style="background:rgba(34,197,94,0.20);color:#22c55e">+2.0%</td><td style="background:rgba(34,197,94,0.58);color:#22c55e">+5.8%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+10.6%</td><td style="background:rgba(34,197,94,0.32);color:#22c55e">+3.2%</td><td style="background:rgba(34,197,94,0.60);color:#22c55e">+6.0%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(34,197,94,0.54);color:#22c55e">+5.4%</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">9/9</td></tr><tr><td class="rl">INFR</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+10.2%</td><td style="background:rgba(34,197,94,0.75);color:#22c55e">+10.8%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.31);color:#22c55e">+3.1%</td><td style="background:rgba(239,68,68,0.34);color:#ef4444">-3.4%</td><td style="background:rgba(34,197,94,0.05);color:#22c55e">+0.5%</td><td style="color:var(--muted)">N/A</td><td style="background:rgba(34,197,94,0.52);color:#22c55e">+5.2%</td><td style="background:rgba(239,68,68,0.21);color:#ef4444">-2.1%</td><td style="background:rgba(34,197,94,0.06);color:#22c55e">+0.6%</td><td style="background:rgba(239,68,68,0.54);color:#ef4444">-5.4%</td><td style="background:var(--card2);color:var(--muted)">—</td><td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">6/9</td></tr></tbody></table></div>
+</div>
+
+<div class="chart-card">
+  <div class="section-title">Weekly Rebalance Log</div>
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('all',this)">All Weeks</div>
+    <div class="tab" onclick="switchTab('chg',this)">Changes Only</div>
+  </div>
+  <div id="log"><div class="lr" data-changed="0">
+  <div class="ld">2026-06-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">JNBR</span><span class="tag">PHRM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2229.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-06-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2229.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-05-29</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ MOM</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2252.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-05-22</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PHRM</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2282.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-05-15</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">SILV</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ SILV</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2268.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-05-08</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">JNBR</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− INFR</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2297.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-05-01</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">JNBR</span><span class="tag">INFR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ INFR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2246.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-04-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">PHRM</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2229.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-04-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">JNBR</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2242.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-04-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">PSUB</span><span class="tag">SILV</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2190.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-04-02</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">PHRM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2129.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2026-03-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">PHRM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2123.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-03-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2200.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-03-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2349.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-03-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2410.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-02-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2482.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-02-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2382.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-02-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2322.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-02-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2263.4K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-01-30</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2562.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-01-23</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2548.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-01-16</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2414.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-01-09</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2200.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2026-01-02</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2166.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-12-26</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2139.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-12-19</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹2008.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-12-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1965.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-12-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1903.4K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-11-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1845.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-11-21</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1769.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-11-14</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1818.4K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-11-07</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1746.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-10-31</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1737.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-10-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1753.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-10-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1873.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-10-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1791.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-10-03</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1709.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-09-26</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1656.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-09-19</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1615.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-09-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1607.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-09-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1560.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-08-29</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1490.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-08-22</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1500.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-08-14</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1511.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-08-08</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1508.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-08-01</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1483.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-07-25</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1525.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-07-18</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1529.7K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-07-11</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">MOM</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1505.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-07-04</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">PSUB</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1535.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-06-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">PSUB</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1529.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-06-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">PSUB</span><span class="tag">BANK</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ BANK</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1492.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-06-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">PSUB</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1506.8K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-06-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1531.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-05-30</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">BANK</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− INFR</span> <span class="badge badge-green">+ BANK</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1503.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-05-23</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">INFR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ PSUB</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1478.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-05-16</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">BANK</span><span class="tag">INFR</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1471.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-05-09</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">BANK</span><span class="tag">INFR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1452.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-05-02</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">BANK</span><span class="tag">INFR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ INFR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1456.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-04-25</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">BANK</span><span class="tag">SILV</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1481.4K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-04-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">BANK</span><span class="tag">SILV</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1462.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-04-11</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1412.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-04-04</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1396.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-03-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1430.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-03-21</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-green">+ BANK</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1402.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-03-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">PHRM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− NFTY</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1373.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-03-07</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">NFTY</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-green">+ NFTY</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1368.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-02-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− NFTY</span> <span class="badge badge-green">+ BANK</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1341.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-02-21</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">NFTY</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1380.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-02-14</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">NFTY</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ NFTY</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1386.8K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-02-07</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− NFTY</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1401.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-01-31</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">AUTO</span><span class="tag">NFTY</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ AUTO</span> <span class="badge badge-green">+ NFTY</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1372.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-01-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">PHRM</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1362.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-01-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1361.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2025-01-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">PHRM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1361.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2025-01-03</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">PHRM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1413.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-12-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">PHRM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1396.8K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-12-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">PSUB</span><span class="tag">PHRM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1380.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-12-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1444.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-12-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1448.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-11-29</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1427.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-11-22</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1435.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-11-14</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1380.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-11-08</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">BANK</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-green">+ BANK</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1440.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-11-01</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PHRM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1493.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-10-25</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PHRM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1464.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-10-18</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1512.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-10-11</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">AUTO</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1549.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-10-04</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-red">− NFTY</span> <span class="badge badge-green">+ MOM</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1543.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-09-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">AUTO</span><span class="tag">NFTY</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1606.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-09-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">NFTY</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1586.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-09-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">NFTY</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1588.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-09-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">NFTY</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1557.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-08-30</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">NFTY</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ NFTY</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1573.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-08-23</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1546.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-08-16</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1522.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-08-09</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1518.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-08-02</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1528.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-07-26</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">PHRM</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1530.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-07-19</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">JNBR</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1477.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-07-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">JNBR</span><span class="tag">MOM</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1506.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-07-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">JNBR</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1505.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-06-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">JNBR</span><span class="tag">AUTO</span><span class="tag">SILV</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1470.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-06-21</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">JNBR</span><span class="tag">SILV</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1481.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-06-14</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">SILV</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1483.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-06-07</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1469.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-05-31</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1467.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-05-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">JNBR</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1474.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-05-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1429.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-05-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ SILV</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1410.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-05-03</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">JNBR</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1447.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-04-26</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">AUTO</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− GOLD</span> <span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ AUTO</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1417.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-04-19</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">GOLD</span><span class="tag">SILV</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1406.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-04-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">AUTO</span><span class="tag">SILV</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1438.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-04-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">AUTO</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− INFR</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1437.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-03-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">AUTO</span><span class="tag">INFR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-green">+ INFR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1411.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-03-22</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">AUTO</span><span class="tag">PHRM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− INFR</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1391.5K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-03-15</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">PHRM</span><span class="tag">INFR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1376.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-03-07</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1456.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-03-01</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1422.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-02-23</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">JNBR</span><span class="tag">INFR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1418.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-02-16</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">JNBR</span><span class="tag">INFR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1412.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-02-09</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1382.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-02-02</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1347.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2024-01-25</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1270.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-01-19</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">INFR</span><span class="tag">JNBR</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1277.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-01-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">JNBR</span><span class="tag">INFR</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1268.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2024-01-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">JNBR</span><span class="tag">INFR</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1255.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-12-29</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">JNBR</span><span class="tag">INFR</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1233.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-12-22</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">INFR</span><span class="tag">JNBR</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1202.4K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-12-15</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1225.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-12-08</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">INFR</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ INFR</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1183.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-12-01</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">AUTO</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1144.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-11-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">MOM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1110.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-11-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1112.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-11-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1084.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-11-03</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1071.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-10-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1057.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-10-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PHRM</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1077.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-10-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">PHRM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1093.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-10-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">PHRM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1105.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-09-29</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">MOM</span><span class="tag">PHRM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1116.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-09-22</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">PHRM</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1101.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-09-15</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">PHRM</span><span class="tag">MOM</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1104.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-09-08</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">PHRM</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1074.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-09-01</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1051.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-08-25</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1044.6K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-08-18</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1049.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-08-11</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">PSUB</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1047.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-08-04</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">MOM</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1041.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-07-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PHRM</span><span class="tag">AUTO</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ PHRM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1036.3K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-07-21</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">MOM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1029.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-07-14</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">MOM</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1012.6K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-07-07</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">PSUB</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− JNBR</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1012.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-06-30</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">MOM</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1000.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-06-23</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">MOM</span><span class="tag">JNBR</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹969.8K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-06-16</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">AUTO</span><span class="tag">JNBR</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹984.9K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-06-09</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">AUTO</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹979.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-06-02</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">MOM</span><span class="tag">JNBR</span><span class="tag">SILV</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹969.3K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-05-26</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">JNBR</span><span class="tag">MOM</span><span class="tag">BANK</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹957.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-05-19</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">BANK</span><span class="tag">JNBR</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− INFR</span> <span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ BANK</span> <span class="badge badge-green">+ JNBR</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹955.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-05-12</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">INFR</span><span class="tag">SILV</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-red">− GOLD</span> <span class="badge badge-green">+ INFR</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹959.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-05-05</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">PSUB</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− AUTO</span> <span class="badge badge-green">+ PSUB</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1000.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-04-28</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹976.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-04-21</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹974.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-04-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹982.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-04-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹963.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-03-31</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹942.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-03-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹930.1K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-03-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− MOM</span> <span class="badge badge-green">+ SILV</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹912.0K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-03-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">AUTO</span><span class="tag">MOM</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− SILV</span> <span class="badge badge-green">+ MOM</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹918.1K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-03-03</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">AUTO</span><span class="tag">SILV</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹933.7K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-02-24</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹937.2K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-02-17</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">AUTO</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− PSUB</span> <span class="badge badge-green">+ AUTO</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹945.8K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-02-10</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">GOLD</span><span class="tag">SILV</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹970.5K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-02-03</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹987.9K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-01-27</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">SILV</span><span class="tag">GOLD</span><span class="tag">PSUB</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹971.0K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-01-20</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">SILV</span><span class="tag">GOLD</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1003.7K</div>
+  </div>
+</div><div class="lr" data-changed="1">
+  <div class="ld">2023-01-13</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">SILV</span><span class="tag">GOLD</span></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span class="badge badge-red">− BANK</span> <span class="badge badge-green">+ GOLD</span></div>
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹1001.2K</div>
+  </div>
+</div><div class="lr" data-changed="0">
+  <div class="ld">2023-01-06</div>
+  <div class="lb">
+    <div style="display:flex;align-items:center;flex-wrap:wrap"><span class="tag">PSUB</span><span class="tag">SILV</span><span class="tag">BANK</span><span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span></div>
+    
+    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹999.0K</div>
+  </div>
+</div></div>
+</div>
+
+<div class="updated">Generated by GitHub Actions · yfinance · Strategy by RS Matrix</div>
+</div>
+
+<script>
+const edata = [{"x": "2023-01-06", "y": 999000.0}, {"x": "2023-01-13", "y": 1001181.05}, {"x": "2023-01-20", "y": 1003658.41}, {"x": "2023-01-27", "y": 970980.23}, {"x": "2023-02-03", "y": 987901.33}, {"x": "2023-02-10", "y": 970541.14}, {"x": "2023-02-17", "y": 945778.4}, {"x": "2023-02-24", "y": 937214.48}, {"x": "2023-03-03", "y": 933709.9}, {"x": "2023-03-10", "y": 918081.62}, {"x": "2023-03-17", "y": 911984.72}, {"x": "2023-03-24", "y": 930086.8}, {"x": "2023-03-31", "y": 942025.97}, {"x": "2023-04-06", "y": 963711.25}, {"x": "2023-04-13", "y": 982832.15}, {"x": "2023-04-21", "y": 974124.77}, {"x": "2023-04-28", "y": 976865.15}, {"x": "2023-05-05", "y": 1000749.72}, {"x": "2023-05-12", "y": 959116.24}, {"x": "2023-05-19", "y": 955198.73}, {"x": "2023-05-26", "y": 957047.76}, {"x": "2023-06-02", "y": 969332.44}, {"x": "2023-06-09", "y": 979118.39}, {"x": "2023-06-16", "y": 984851.51}, {"x": "2023-06-23", "y": 969765.73}, {"x": "2023-06-30", "y": 1000233.26}, {"x": "2023-07-07", "y": 1012186.24}, {"x": "2023-07-14", "y": 1012560.06}, {"x": "2023-07-21", "y": 1029650.56}, {"x": "2023-07-28", "y": 1036286.2}, {"x": "2023-08-04", "y": 1041137.37}, {"x": "2023-08-11", "y": 1047521.56}, {"x": "2023-08-18", "y": 1048985.35}, {"x": "2023-08-25", "y": 1044581.56}, {"x": "2023-09-01", "y": 1051817.93}, {"x": "2023-09-08", "y": 1074008.79}, {"x": "2023-09-15", "y": 1104923.42}, {"x": "2023-09-22", "y": 1100951.59}, {"x": "2023-09-29", "y": 1116222.55}, {"x": "2023-10-06", "y": 1105143.57}, {"x": "2023-10-13", "y": 1092959.72}, {"x": "2023-10-20", "y": 1077230.49}, {"x": "2023-10-27", "y": 1057910.58}, {"x": "2023-11-03", "y": 1071271.42}, {"x": "2023-11-10", "y": 1084866.64}, {"x": "2023-11-17", "y": 1112326.13}, {"x": "2023-11-24", "y": 1110190.94}, {"x": "2023-12-01", "y": 1144021.49}, {"x": "2023-12-08", "y": 1183484.35}, {"x": "2023-12-15", "y": 1225260.58}, {"x": "2023-12-22", "y": 1202370.22}, {"x": "2023-12-29", "y": 1233399.5}, {"x": "2024-01-05", "y": 1255782.4}, {"x": "2024-01-12", "y": 1268282.25}, {"x": "2024-01-19", "y": 1277042.99}, {"x": "2024-01-25", "y": 1270152.38}, {"x": "2024-02-02", "y": 1347633.48}, {"x": "2024-02-09", "y": 1382248.89}, {"x": "2024-02-16", "y": 1412540.47}, {"x": "2024-02-23", "y": 1418691.28}, {"x": "2024-03-01", "y": 1422563.21}, {"x": "2024-03-07", "y": 1456106.89}, {"x": "2024-03-15", "y": 1376865.81}, {"x": "2024-03-22", "y": 1391504.29}, {"x": "2024-03-28", "y": 1411180.09}, {"x": "2024-04-05", "y": 1437882.74}, {"x": "2024-04-12", "y": 1438281.09}, {"x": "2024-04-19", "y": 1405980.06}, {"x": "2024-04-26", "y": 1417422.11}, {"x": "2024-05-03", "y": 1447160.46}, {"x": "2024-05-10", "y": 1410286.58}, {"x": "2024-05-17", "y": 1429121.35}, {"x": "2024-05-24", "y": 1474603.32}, {"x": "2024-05-31", "y": 1467557.79}, {"x": "2024-06-07", "y": 1469169.3}, {"x": "2024-06-14", "y": 1483855.1}, {"x": "2024-06-21", "y": 1481645.75}, {"x": "2024-06-28", "y": 1470200.25}, {"x": "2024-07-05", "y": 1505547.27}, {"x": "2024-07-12", "y": 1506832.59}, {"x": "2024-07-19", "y": 1477037.36}, {"x": "2024-07-26", "y": 1530178.01}, {"x": "2024-08-02", "y": 1528345.19}, {"x": "2024-08-09", "y": 1518619.01}, {"x": "2024-08-16", "y": 1522417.57}, {"x": "2024-08-23", "y": 1545986.0}, {"x": "2024-08-30", "y": 1573451.67}, {"x": "2024-09-06", "y": 1557250.41}, {"x": "2024-09-13", "y": 1588190.13}, {"x": "2024-09-20", "y": 1586158.44}, {"x": "2024-09-27", "y": 1606878.2}, {"x": "2024-10-04", "y": 1543265.91}, {"x": "2024-10-11", "y": 1549299.94}, {"x": "2024-10-18", "y": 1512904.03}, {"x": "2024-10-25", "y": 1464588.98}, {"x": "2024-11-01", "y": 1492971.46}, {"x": "2024-11-08", "y": 1440507.23}, {"x": "2024-11-14", "y": 1380077.9}, {"x": "2024-11-22", "y": 1435319.8}, {"x": "2024-11-29", "y": 1427141.49}, {"x": "2024-12-06", "y": 1448052.42}, {"x": "2024-12-13", "y": 1444268.15}, {"x": "2024-12-20", "y": 1380066.7}, {"x": "2024-12-27", "y": 1396803.76}, {"x": "2025-01-03", "y": 1413874.66}, {"x": "2025-01-10", "y": 1361712.64}, {"x": "2025-01-17", "y": 1360981.7}, {"x": "2025-01-24", "y": 1362465.83}, {"x": "2025-01-31", "y": 1372874.41}, {"x": "2025-02-07", "y": 1401059.9}, {"x": "2025-02-14", "y": 1386750.22}, {"x": "2025-02-21", "y": 1380009.7}, {"x": "2025-02-28", "y": 1341858.44}, {"x": "2025-03-07", "y": 1367994.14}, {"x": "2025-03-13", "y": 1373498.6}, {"x": "2025-03-21", "y": 1401998.24}, {"x": "2025-03-28", "y": 1430410.17}, {"x": "2025-04-04", "y": 1396132.46}, {"x": "2025-04-11", "y": 1412868.65}, {"x": "2025-04-17", "y": 1462226.29}, {"x": "2025-04-25", "y": 1481420.41}, {"x": "2025-05-02", "y": 1456671.93}, {"x": "2025-05-09", "y": 1452527.16}, {"x": "2025-05-16", "y": 1471571.77}, {"x": "2025-05-23", "y": 1477997.62}, {"x": "2025-05-30", "y": 1503395.04}, {"x": "2025-06-06", "y": 1531366.88}, {"x": "2025-06-13", "y": 1506836.98}, {"x": "2025-06-20", "y": 1492933.06}, {"x": "2025-06-27", "y": 1529553.44}, {"x": "2025-07-04", "y": 1535696.65}, {"x": "2025-07-11", "y": 1505356.72}, {"x": "2025-07-18", "y": 1529656.81}, {"x": "2025-07-25", "y": 1525775.01}, {"x": "2025-08-01", "y": 1483234.63}, {"x": "2025-08-08", "y": 1508498.56}, {"x": "2025-08-14", "y": 1511600.97}, {"x": "2025-08-22", "y": 1500018.63}, {"x": "2025-08-29", "y": 1490452.33}, {"x": "2025-09-05", "y": 1560241.31}, {"x": "2025-09-12", "y": 1607285.14}, {"x": "2025-09-19", "y": 1614985.85}, {"x": "2025-09-26", "y": 1656463.81}, {"x": "2025-10-03", "y": 1709325.85}, {"x": "2025-10-10", "y": 1791224.78}, {"x": "2025-10-17", "y": 1873576.65}, {"x": "2025-10-24", "y": 1753328.75}, {"x": "2025-10-31", "y": 1736983.58}, {"x": "2025-11-07", "y": 1746356.89}, {"x": "2025-11-14", "y": 1818442.07}, {"x": "2025-11-21", "y": 1769840.17}, {"x": "2025-11-28", "y": 1845606.34}, {"x": "2025-12-05", "y": 1903361.01}, {"x": "2025-12-12", "y": 1965930.21}, {"x": "2025-12-19", "y": 2008872.69}, {"x": "2025-12-26", "y": 2139856.95}, {"x": "2026-01-02", "y": 2165987.56}, {"x": "2026-01-09", "y": 2200802.94}, {"x": "2026-01-16", "y": 2414758.1}, {"x": "2026-01-23", "y": 2547959.65}, {"x": "2026-01-30", "y": 2561989.53}, {"x": "2026-02-06", "y": 2263437.29}, {"x": "2026-02-13", "y": 2322211.36}, {"x": "2026-02-20", "y": 2382920.09}, {"x": "2026-02-27", "y": 2482757.98}, {"x": "2026-03-06", "y": 2409983.16}, {"x": "2026-03-13", "y": 2349759.99}, {"x": "2026-03-20", "y": 2200609.19}, {"x": "2026-03-27", "y": 2123838.8}, {"x": "2026-04-02", "y": 2129571.26}, {"x": "2026-04-10", "y": 2190145.21}, {"x": "2026-04-17", "y": 2242438.0}, {"x": "2026-04-24", "y": 2229891.1}, {"x": "2026-05-01", "y": 2246417.28}, {"x": "2026-05-08", "y": 2297020.64}, {"x": "2026-05-15", "y": 2268891.16}, {"x": "2026-05-22", "y": 2282510.53}, {"x": "2026-05-29", "y": 2252796.05}, {"x": "2026-06-05", "y": 2229162.13}, {"x": "2026-06-12", "y": 2229681.5}];
+const ndata = [{"x": "2023-01-06", "y": 988285.23}, {"x": "2023-01-13", "y": 992779.27}, {"x": "2023-01-20", "y": 997020.82}, {"x": "2023-01-27", "y": 974550.63}, {"x": "2023-02-03", "y": 985255.51}, {"x": "2023-02-10", "y": 987123.87}, {"x": "2023-02-17", "y": 991213.95}, {"x": "2023-02-24", "y": 966774.46}, {"x": "2023-03-03", "y": 972076.35}, {"x": "2023-03-10", "y": 963189.29}, {"x": "2023-03-17", "y": 946374.49}, {"x": "2023-03-24", "y": 937588.36}, {"x": "2023-03-31", "y": 958695.25}, {"x": "2023-04-06", "y": 974247.67}, {"x": "2023-04-13", "y": 983488.24}, {"x": "2023-04-21", "y": 973793.24}, {"x": "2023-04-28", "y": 996212.89}, {"x": "2023-05-05", "y": 998990.12}, {"x": "2023-05-12", "y": 1011209.86}, {"x": "2023-05-19", "y": 1008988.15}, {"x": "2023-05-26", "y": 1024288.09}, {"x": "2023-06-02", "y": 1029287.03}, {"x": "2023-06-09", "y": 1030246.44}, {"x": "2023-06-16", "y": 1043678.09}, {"x": "2023-06-23", "y": 1035043.44}, {"x": "2023-06-30", "y": 1063472.06}, {"x": "2023-07-07", "y": 1074126.48}, {"x": "2023-07-14", "y": 1084780.9}, {"x": "2023-07-21", "y": 1098162.0}, {"x": "2023-07-28", "y": 1092405.59}, {"x": "2023-08-04", "y": 1085841.25}, {"x": "2023-08-11", "y": 1082609.58}, {"x": "2023-08-18", "y": 1075540.33}, {"x": "2023-08-25", "y": 1074328.43}, {"x": "2023-09-01", "y": 1081953.2}, {"x": "2023-09-08", "y": 1102858.06}, {"x": "2023-09-15", "y": 1123863.94}, {"x": "2023-09-22", "y": 1094778.86}, {"x": "2023-09-29", "y": 1094475.9}, {"x": "2023-10-06", "y": 1093819.44}, {"x": "2023-10-13", "y": 1101141.26}, {"x": "2023-10-20", "y": 1087154.16}, {"x": "2023-10-27", "y": 1063270.12}, {"x": "2023-11-03", "y": 1073975.0}, {"x": "2023-11-10", "y": 1081801.72}, {"x": "2023-11-17", "y": 1100888.77}, {"x": "2023-11-24", "y": 1103211.49}, {"x": "2023-12-01", "y": 1129822.3}, {"x": "2023-12-08", "y": 1168248.88}, {"x": "2023-12-15", "y": 1194809.15}, {"x": "2023-12-22", "y": 1189153.75}, {"x": "2023-12-29", "y": 1210109.08}, {"x": "2024-01-05", "y": 1210563.59}, {"x": "2024-01-12", "y": 1220612.02}, {"x": "2024-01-19", "y": 1207584.34}, {"x": "2024-01-25", "y": 1192435.88}, {"x": "2024-02-02", "y": 1218440.78}, {"x": "2024-02-09", "y": 1215815.02}, {"x": "2024-02-16", "y": 1232023.9}, {"x": "2024-02-23", "y": 1240608.01}, {"x": "2024-03-01", "y": 1246465.43}, {"x": "2024-03-07", "y": 1255655.46}, {"x": "2024-03-15", "y": 1231064.49}, {"x": "2024-03-22", "y": 1235811.02}, {"x": "2024-03-28", "y": 1247020.88}, {"x": "2024-04-05", "y": 1257574.29}, {"x": "2024-04-12", "y": 1260149.5}, {"x": "2024-04-19", "y": 1239800.08}, {"x": "2024-04-26", "y": 1254494.1}, {"x": "2024-05-03", "y": 1256059.42}, {"x": "2024-05-10", "y": 1236972.38}, {"x": "2024-05-17", "y": 1255958.41}, {"x": "2024-05-24", "y": 1287517.7}, {"x": "2024-05-31", "y": 1268178.16}, {"x": "2024-06-07", "y": 1304888.01}, {"x": "2024-06-14", "y": 1316148.27}, {"x": "2024-06-21", "y": 1317259.16}, {"x": "2024-06-28", "y": 1350636.34}, {"x": "2024-07-05", "y": 1366037.2}, {"x": "2024-07-12", "y": 1373157.0}, {"x": "2024-07-19", "y": 1379973.83}, {"x": "2024-07-26", "y": 1393960.85}, {"x": "2024-08-02", "y": 1392092.57}, {"x": "2024-08-09", "y": 1371389.65}, {"x": "2024-08-16", "y": 1382599.51}, {"x": "2024-08-23", "y": 1396687.62}, {"x": "2024-08-30", "y": 1419309.21}, {"x": "2024-09-06", "y": 1402847.99}, {"x": "2024-09-13", "y": 1429963.7}, {"x": "2024-09-20", "y": 1449707.21}, {"x": "2024-09-27", "y": 1474298.18}, {"x": "2024-10-04", "y": 1414613.23}, {"x": "2024-10-11", "y": 1407392.5}, {"x": "2024-10-18", "y": 1401383.6}, {"x": "2024-10-25", "y": 1365784.79}, {"x": "2024-11-01", "y": 1366592.73}, {"x": "2024-11-08", "y": 1363512.46}, {"x": "2024-11-14", "y": 1330892.83}, {"x": "2024-11-22", "y": 1347505.53}, {"x": "2024-11-29", "y": 1362755.07}, {"x": "2024-12-06", "y": 1393051.98}, {"x": "2024-12-13", "y": 1394061.79}, {"x": "2024-12-20", "y": 1333821.46}, {"x": "2024-12-27", "y": 1345132.42}, {"x": "2025-01-03", "y": 1355332.32}, {"x": "2025-01-10", "y": 1324076.0}, {"x": "2025-01-17", "y": 1311704.7}, {"x": "2025-01-24", "y": 1303726.58}, {"x": "2025-01-31", "y": 1328014.59}, {"x": "2025-02-07", "y": 1331801.7}, {"x": "2025-02-14", "y": 1297465.26}, {"x": "2025-02-21", "y": 1290294.93}, {"x": "2025-02-28", "y": 1254544.56}, {"x": "2025-03-07", "y": 1276711.8}, {"x": "2025-03-13", "y": 1267723.72}, {"x": "2025-03-21", "y": 1318370.05}, {"x": "2025-03-28", "y": 1329074.94}, {"x": "2025-04-04", "y": 1298525.61}, {"x": "2025-04-11", "y": 1292516.71}, {"x": "2025-04-17", "y": 1345889.81}, {"x": "2025-04-25", "y": 1356443.21}, {"x": "2025-05-02", "y": 1372298.52}, {"x": "2025-05-09", "y": 1355736.21}, {"x": "2025-05-16", "y": 1414916.18}, {"x": "2025-05-23", "y": 1405625.15}, {"x": "2025-05-30", "y": 1403605.39}, {"x": "2025-06-06", "y": 1416380.58}, {"x": "2025-06-13", "y": 1399212.36}, {"x": "2025-06-20", "y": 1421430.06}, {"x": "2025-06-27", "y": 1454049.69}, {"x": "2025-07-04", "y": 1444708.11}, {"x": "2025-07-11", "y": 1429559.66}, {"x": "2025-07-18", "y": 1421076.56}, {"x": "2025-07-25", "y": 1414007.31}, {"x": "2025-08-01", "y": 1400474.73}, {"x": "2025-08-08", "y": 1389315.41}, {"x": "2025-08-14", "y": 1404918.3}, {"x": "2025-08-22", "y": 1417642.95}, {"x": "2025-08-29", "y": 1393960.85}, {"x": "2025-09-05", "y": 1411836.07}, {"x": "2025-09-12", "y": 1431579.58}, {"x": "2025-09-19", "y": 1443647.77}, {"x": "2025-09-26", "y": 1407493.43}, {"x": "2025-10-03", "y": 1419713.26}, {"x": "2025-10-10", "y": 1441728.94}, {"x": "2025-10-17", "y": 1465209.17}, {"x": "2025-10-24", "y": 1476419.03}, {"x": "2025-10-31", "y": 1469804.06}, {"x": "2025-11-07", "y": 1456473.5}, {"x": "2025-11-14", "y": 1478640.66}, {"x": "2025-11-21", "y": 1486164.5}, {"x": "2025-11-28", "y": 1497121.8}, {"x": "2025-12-05", "y": 1494698.14}, {"x": "2025-12-12", "y": 1488032.78}, {"x": "2025-12-19", "y": 1481768.85}, {"x": "2025-12-26", "y": 1486871.35}, {"x": "2026-01-02", "y": 1502474.24}, {"x": "2026-01-09", "y": 1467329.86}, {"x": "2026-01-16", "y": 1469602.19}, {"x": "2026-01-23", "y": 1433599.34}, {"x": "2026-01-30", "y": 1447838.92}, {"x": "2026-02-06", "y": 1467632.82}, {"x": "2026-02-13", "y": 1458644.74}, {"x": "2026-02-20", "y": 1460462.64}, {"x": "2026-02-27", "y": 1440567.65}, {"x": "2026-03-06", "y": 1399969.75}, {"x": "2026-03-13", "y": 1326449.26}, {"x": "2026-03-20", "y": 1323318.6}, {"x": "2026-03-27", "y": 1307261.28}, {"x": "2026-04-02", "y": 1300797.79}, {"x": "2026-04-10", "y": 1373207.54}, {"x": "2026-04-17", "y": 1393001.44}, {"x": "2026-04-24", "y": 1368864.9}, {"x": "2026-05-01", "y": 1373510.5}, {"x": "2026-05-08", "y": 1383255.97}, {"x": "2026-05-15", "y": 1349727.31}, {"x": "2026-05-22", "y": 1358816.48}, {"x": "2026-05-29", "y": 1352151.12}, {"x": "2026-06-05", "y": 1339931.3}, {"x": "2026-06-12", "y": 1352555.01}];
+const ddata = [{"x": "2023-01-06", "y": -0.1}, {"x": "2023-01-13", "y": 0.0}, {"x": "2023-01-20", "y": 0.0}, {"x": "2023-01-27", "y": -3.256}, {"x": "2023-02-03", "y": -1.57}, {"x": "2023-02-10", "y": -3.3}, {"x": "2023-02-17", "y": -5.767}, {"x": "2023-02-24", "y": -6.62}, {"x": "2023-03-03", "y": -6.969}, {"x": "2023-03-10", "y": -8.526}, {"x": "2023-03-17", "y": -9.134}, {"x": "2023-03-24", "y": -7.33}, {"x": "2023-03-31", "y": -6.141}, {"x": "2023-04-06", "y": -3.98}, {"x": "2023-04-13", "y": -2.075}, {"x": "2023-04-21", "y": -2.943}, {"x": "2023-04-28", "y": -2.67}, {"x": "2023-05-05", "y": -0.29}, {"x": "2023-05-12", "y": -4.438}, {"x": "2023-05-19", "y": -4.828}, {"x": "2023-05-26", "y": -4.644}, {"x": "2023-06-02", "y": -3.42}, {"x": "2023-06-09", "y": -2.445}, {"x": "2023-06-16", "y": -1.874}, {"x": "2023-06-23", "y": -3.377}, {"x": "2023-06-30", "y": -0.341}, {"x": "2023-07-07", "y": 0.0}, {"x": "2023-07-14", "y": 0.0}, {"x": "2023-07-21", "y": 0.0}, {"x": "2023-07-28", "y": 0.0}, {"x": "2023-08-04", "y": 0.0}, {"x": "2023-08-11", "y": 0.0}, {"x": "2023-08-18", "y": 0.0}, {"x": "2023-08-25", "y": -0.42}, {"x": "2023-09-01", "y": 0.0}, {"x": "2023-09-08", "y": 0.0}, {"x": "2023-09-15", "y": 0.0}, {"x": "2023-09-22", "y": -0.359}, {"x": "2023-09-29", "y": 0.0}, {"x": "2023-10-06", "y": -0.993}, {"x": "2023-10-13", "y": -2.084}, {"x": "2023-10-20", "y": -3.493}, {"x": "2023-10-27", "y": -5.224}, {"x": "2023-11-03", "y": -4.027}, {"x": "2023-11-10", "y": -2.809}, {"x": "2023-11-17", "y": -0.349}, {"x": "2023-11-24", "y": -0.54}, {"x": "2023-12-01", "y": 0.0}, {"x": "2023-12-08", "y": 0.0}, {"x": "2023-12-15", "y": 0.0}, {"x": "2023-12-22", "y": -1.868}, {"x": "2023-12-29", "y": 0.0}, {"x": "2024-01-05", "y": 0.0}, {"x": "2024-01-12", "y": 0.0}, {"x": "2024-01-19", "y": 0.0}, {"x": "2024-01-25", "y": -0.54}, {"x": "2024-02-02", "y": 0.0}, {"x": "2024-02-09", "y": 0.0}, {"x": "2024-02-16", "y": 0.0}, {"x": "2024-02-23", "y": 0.0}, {"x": "2024-03-01", "y": 0.0}, {"x": "2024-03-07", "y": 0.0}, {"x": "2024-03-15", "y": -5.442}, {"x": "2024-03-22", "y": -4.437}, {"x": "2024-03-28", "y": -3.085}, {"x": "2024-04-05", "y": -1.252}, {"x": "2024-04-12", "y": -1.224}, {"x": "2024-04-19", "y": -3.443}, {"x": "2024-04-26", "y": -2.657}, {"x": "2024-05-03", "y": -0.614}, {"x": "2024-05-10", "y": -3.147}, {"x": "2024-05-17", "y": -1.853}, {"x": "2024-05-24", "y": 0.0}, {"x": "2024-05-31", "y": -0.478}, {"x": "2024-06-07", "y": -0.369}, {"x": "2024-06-14", "y": 0.0}, {"x": "2024-06-21", "y": -0.149}, {"x": "2024-06-28", "y": -0.92}, {"x": "2024-07-05", "y": 0.0}, {"x": "2024-07-12", "y": 0.0}, {"x": "2024-07-19", "y": -1.977}, {"x": "2024-07-26", "y": 0.0}, {"x": "2024-08-02", "y": -0.12}, {"x": "2024-08-09", "y": -0.755}, {"x": "2024-08-16", "y": -0.507}, {"x": "2024-08-23", "y": 0.0}, {"x": "2024-08-30", "y": 0.0}, {"x": "2024-09-06", "y": -1.03}, {"x": "2024-09-13", "y": 0.0}, {"x": "2024-09-20", "y": -0.128}, {"x": "2024-09-27", "y": 0.0}, {"x": "2024-10-04", "y": -3.959}, {"x": "2024-10-11", "y": -3.583}, {"x": "2024-10-18", "y": -5.848}, {"x": "2024-10-25", "y": -8.855}, {"x": "2024-11-01", "y": -7.089}, {"x": "2024-11-08", "y": -10.354}, {"x": "2024-11-14", "y": -14.114}, {"x": "2024-11-22", "y": -10.677}, {"x": "2024-11-29", "y": -11.185}, {"x": "2024-12-06", "y": -9.884}, {"x": "2024-12-13", "y": -10.12}, {"x": "2024-12-20", "y": -14.115}, {"x": "2024-12-27", "y": -13.073}, {"x": "2025-01-03", "y": -12.011}, {"x": "2025-01-10", "y": -15.257}, {"x": "2025-01-17", "y": -15.303}, {"x": "2025-01-24", "y": -15.21}, {"x": "2025-01-31", "y": -14.563}, {"x": "2025-02-07", "y": -12.809}, {"x": "2025-02-14", "y": -13.699}, {"x": "2025-02-21", "y": -14.119}, {"x": "2025-02-28", "y": -16.493}, {"x": "2025-03-07", "y": -14.866}, {"x": "2025-03-13", "y": -14.524}, {"x": "2025-03-21", "y": -12.75}, {"x": "2025-03-28", "y": -10.982}, {"x": "2025-04-04", "y": -13.115}, {"x": "2025-04-11", "y": -12.074}, {"x": "2025-04-17", "y": -9.002}, {"x": "2025-04-25", "y": -7.808}, {"x": "2025-05-02", "y": -9.348}, {"x": "2025-05-09", "y": -9.606}, {"x": "2025-05-16", "y": -8.42}, {"x": "2025-05-23", "y": -8.021}, {"x": "2025-05-30", "y": -6.44}, {"x": "2025-06-06", "y": -4.699}, {"x": "2025-06-13", "y": -6.226}, {"x": "2025-06-20", "y": -7.091}, {"x": "2025-06-27", "y": -4.812}, {"x": "2025-07-04", "y": -4.43}, {"x": "2025-07-11", "y": -6.318}, {"x": "2025-07-18", "y": -4.806}, {"x": "2025-07-25", "y": -5.047}, {"x": "2025-08-01", "y": -7.695}, {"x": "2025-08-08", "y": -6.122}, {"x": "2025-08-14", "y": -5.929}, {"x": "2025-08-22", "y": -6.65}, {"x": "2025-08-29", "y": -7.245}, {"x": "2025-09-05", "y": -2.902}, {"x": "2025-09-12", "y": 0.0}, {"x": "2025-09-19", "y": 0.0}, {"x": "2025-09-26", "y": 0.0}, {"x": "2025-10-03", "y": 0.0}, {"x": "2025-10-10", "y": 0.0}, {"x": "2025-10-17", "y": 0.0}, {"x": "2025-10-24", "y": -6.418}, {"x": "2025-10-31", "y": -7.29}, {"x": "2025-11-07", "y": -6.79}, {"x": "2025-11-14", "y": -2.943}, {"x": "2025-11-21", "y": -5.537}, {"x": "2025-11-28", "y": -1.493}, {"x": "2025-12-05", "y": 0.0}, {"x": "2025-12-12", "y": 0.0}, {"x": "2025-12-19", "y": 0.0}, {"x": "2025-12-26", "y": 0.0}, {"x": "2026-01-02", "y": 0.0}, {"x": "2026-01-09", "y": 0.0}, {"x": "2026-01-16", "y": 0.0}, {"x": "2026-01-23", "y": 0.0}, {"x": "2026-01-30", "y": 0.0}, {"x": "2026-02-06", "y": -11.653}, {"x": "2026-02-13", "y": -9.359}, {"x": "2026-02-20", "y": -6.989}, {"x": "2026-02-27", "y": -3.093}, {"x": "2026-03-06", "y": -5.933}, {"x": "2026-03-13", "y": -8.284}, {"x": "2026-03-20", "y": -14.105}, {"x": "2026-03-27", "y": -17.102}, {"x": "2026-04-02", "y": -16.878}, {"x": "2026-04-10", "y": -14.514}, {"x": "2026-04-17", "y": -12.473}, {"x": "2026-04-24", "y": -12.963}, {"x": "2026-05-01", "y": -12.317}, {"x": "2026-05-08", "y": -10.342}, {"x": "2026-05-15", "y": -11.44}, {"x": "2026-05-22", "y": -10.909}, {"x": "2026-05-29", "y": -12.068}, {"x": "2026-06-05", "y": -12.991}, {"x": "2026-06-12", "y": -12.971}];
+
+const gridColor = '#2e3250';
+const eCtx = document.getElementById('ec').getContext('2d');
+new Chart(eCtx,{type:'line',data:{datasets:[
+  {label:'RS Strategy',data:edata,borderColor:'#4f8ef7',backgroundColor:'rgba(79,142,247,0.08)',borderWidth:2,pointRadius:0,tension:0.3,fill:true},
+  {label:'NiftyBees',data:ndata,borderColor:'#f59e0b',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,borderDash:[5,4],tension:0.3}
+]},options:{responsive:true,maintainAspectRatio:false,
+  interaction:{mode:'index',intersect:false},
+  plugins:{legend:{labels:{color:'#8892b0',font:{size:12}}},
+    tooltip:{backgroundColor:'#1a1d27',titleColor:'#e2e8f0',bodyColor:'#8892b0',
+      callbacks:{label:c=>`${c.dataset.label}: ₹${(c.raw.y/1000).toFixed(1)}K`}}},
+  scales:{
+    x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gridColor}},
+    y:{ticks:{color:'#8892b0',callback:v=>'₹'+(v/1000).toFixed(0)+'K'},grid:{color:gridColor}}
+  }}});
+
+const dCtx = document.getElementById('dc').getContext('2d');
+new Chart(dCtx,{type:'line',data:{datasets:[
+  {label:'Drawdown',data:ddata,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,0.12)',borderWidth:1.5,pointRadius:0,tension:0.3,fill:true}
+]},options:{responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{display:false},tooltip:{backgroundColor:'#1a1d27',callbacks:{label:c=>`DD: ${c.raw.y.toFixed(2)}%`}}},
+  scales:{
+    x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gridColor}},
+    y:{ticks:{color:'#8892b0',callback:v=>v.toFixed(1)+'%'},grid:{color:gridColor}}
+  }}});
+
+function switchTab(t,el){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.lr').forEach(r=>{
+    if(t==='all') r.style.display='flex';
+    else r.style.display = r.dataset.changed==='1' ? 'flex' : 'none';
+  });
+}
+</script>
+</body>
+</html>
