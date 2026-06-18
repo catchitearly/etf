@@ -1,0 +1,42 @@
+name: ETF RS Backtest
+
+on:
+  schedule:
+    - cron: '0 4 * * 5'   # Every Friday at 4:00 AM UTC (9:30 AM IST after market open)
+  workflow_dispatch:        # Manual trigger from GitHub UI
+
+permissions:
+  contents: write           # needed to commit docs/index.html back to repo
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backtest and generate report
+        run: python backtest.py
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --cached --quiet || git commit -m "backtest: update report $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
