@@ -44,7 +44,7 @@ ETFS = [
 
     # --- PSU, Government & Theme-Based ---
     ("PSUBNKBEES.NS",  "PSUBankBees",    "PSUB"),
-    ("CPSEBEES.NS",    "CPSEBees",       "CPSE"),
+   
     ("CPSEETF.NS",     "CPSE_ETF",       "CETF"),
 
     # --- Debt & Fixed Income (G-Sec) ---
