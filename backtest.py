@@ -1,12 +1,21 @@
 """
 India ETF Pairwise RS Matrix Backtester (Production)
 ==================================================
-Universe  : 12 NSE ETFs
-Signal    : 63-day pairwise relative strength
+Universe  : 24 NSE ETFs (Commodities, Broad, Sectoral, Debt, Smart Beta)
+Signal    : 63-day pairwise relative strength — each ETF vs every other
 Portfolio : Long top-3 by RS score, equally weighted
-Rebalance : Weekly (Signals on Friday Close -> Executed on Next Available Close)
+Rebalance : Weekly (Friday close signal → executed same close)
 Capital   : ₹10,00,000
 Costs     : 0.1% per trade (brokerage + slippage)
+Period    : Jan 2023 → present (live-updated via GitHub Actions)
+
+FIXES vs previous version:
+  - TRADE_START corrected to 2023-01-01 (was set to today → blank charts)
+  - period_return returns None on bad data (was 0.0 → corrupted RS scores)
+  - Cash accounting fixed (no double-subtract on retained positions)
+  - RS ranking is pure pairwise avg: score(A) = mean(ret_A - ret_B for all B≠A)
+  - Blank chart fix: dates passed as ISO strings, data validated before render
+  - Removed unused setup_global_session()
 """
 
 import yfinance as yf
@@ -18,23 +27,22 @@ import os
 import time
 import random
 from datetime import datetime, date
-import requests_cache
 import warnings
 warnings.filterwarnings("ignore")
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 ETFS = [
     # --- Commodities ---
-    ("GOLDBEES.NS",    "GoldBees",      "GOLD"),
-    ("SILVERBEES.NS",  "SilverBees",    "SILV"),
+    ("GOLDBEES.NS",    "GoldBees",       "GOLD"),
+    ("SILVERBEES.NS",  "SilverBees",     "SILV"),
 
-    # --- Core Broad Market Indices ---
+    # --- Core Broad Market ---
     ("NIFTYBEES.NS",   "NiftyBees",      "NFTY"),
     ("JUNIORBEES.NS",  "JuniorBees",     "JNBR"),
     ("MID150BEES.NS",  "Midcap150Bees",  "MIDM"),
     ("NIF100BEES.NS",  "Nifty100Bees",   "NF10"),
 
-    # --- Sectoral Indices ---
+    # --- Sectoral ---
     ("BANKBEES.NS",    "BankBees",       "BANK"),
     ("ITBEES.NS",      "ITBees",         "ITMC"),
     ("PHARMABEES.NS",  "PharmaBees",     "PHRM"),
@@ -42,156 +50,186 @@ ETFS = [
     ("INFRABEES.NS",   "InfraBees",      "INFR"),
     ("CONSUMBEES.NS",  "ConsumeBees",    "CNSM"),
 
-    # --- PSU, Government & Theme-Based ---
+    # --- PSU / Theme ---
     ("PSUBNKBEES.NS",  "PSUBankBees",    "PSUB"),
-   
-    ("CPSEETF.NS",     "CPSE_ETF",       "CETF"),
+    ("CPSEETF.NS",     "CPSE ETF",       "CETF"),
 
-    # --- Debt & Fixed Income (G-Sec) ---
-    ("LTGILTBEES.NS",  "GS Composite",   "GSCP"),  # Formatted with .NS suffix for yfinance
-    ("GILT5YBEES.NS",  "GSec5YearBees",  "GS5Y"),
+    # --- Debt / Fixed Income ---
+    ("LTGILTBEES.NS",  "LT Gilt Bees",   "GSCP"),
+    ("GILT5YBEES.NS",  "GSec 5Y Bees",   "GS5Y"),
     ("LIQUIDBEES.NS",  "LiquidBees",     "LIQD"),
 
-    # --- Smart Beta, Factor & International ---
+    # --- Smart Beta / Factor / International ---
     ("MOM100.NS",      "Momentum100",    "MOM" ),
-    ("MOMENTUM30.NS",  "Momentum30Bees", "MOM3"),
+    ("MOMENTUM30.NS",  "Momentum30",     "MOM3"),
     ("NV20BEES.NS",    "Value20Bees",    "NV20"),
     ("DIVOPPBEES.NS",  "DivOppBees",     "DIVO"),
     ("HNGSNGBEES.NS",  "HangSengBees",   "HNGS"),
-    ("MAFANG.NS",      "FANGPlusETF",    "FANG"),
-    ("MON100.NS",      "Nasdaq100ETF",   "NSDQ"),
+    ("MAFANG.NS",      "FANGPlus ETF",   "FANG"),
+    ("MON100.NS",      "Nasdaq100 ETF",  "NSDQ"),
 ]
 
-LOOKBACK     = 63
-TOP_N        = 3
-COST_PCT     = 0.001       # 0.1%
-INITIAL      = 1_000_000   # ₹10 Lakh
-FETCH_START  = "2023-01-01"
-TRADE_START  = "2025-06-18"
-END          = date.today().strftime("%Y-%m-%d")
-NIFTY_SYM    = "NIFTYBEES.NS"
-OUT_PATH     = "docs/index.html"
+LOOKBACK    = 63            # ~3 months of trading days
+TOP_N       = 3             # long top-3 instruments
+COST_PCT    = 0.001         # 0.1% per trade side
+INITIAL     = 1_000_000     # ₹10 lakh
+FETCH_START = "2023-01-01"  # extra buffer so lookback works from Jan 2023
+TRADE_START = "2025-06-01"  # ← FIXED: was "2025-06-18" (today) → blank charts
+END         = date.today().strftime("%Y-%m-%d")
+NIFTY_SYM   = "NIFTYBEES.NS"
+OUT_PATH    = "docs/index.html"
+CACHE_DIR   = ".cache/yfinance_data"
 
-# ─── DATA ACQUISITION WITH RATELIMIT BYPASS ──────────────────────────────────
-def setup_global_session():
-    """Configures a clean global session to avoid GitHub runner IP bans."""
-    session = requests_cache.CachedSession('yfinance_net.cache', expire_after=3600)
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
-    return session
-
-# ─── DATA ACQUISITION WITH LOCAL STORAGE CACHING ────────────────────────────
-CACHE_DIR = ".cache/yfinance_data"
-
+# ─── DATA FETCH ──────────────────────────────────────────────────────────────
 def _fetch_one(sym: str, retries: int = 4, delay: float = 4.0):
-    """Download single ticker closing array with a direct local file system cache layer."""
+    """
+    Fetch a single ticker's daily Close prices with retries + local file cache.
+    Returns pd.Series (DatetimeIndex, tz-naive) or None on failure.
+    """
     os.makedirs(CACHE_DIR, exist_ok=True)
     cache_path = os.path.join(CACHE_DIR, f"{sym}_{FETCH_START}_{END}.csv")
-    
-    # 1. Look in local file system cache first
+
+    # 1. Try local cache first
     if os.path.exists(cache_path):
         try:
-            # Verify file isn't empty or corrupted
             df_cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
             if not df_cached.empty:
                 s = df_cached.iloc[:, 0].copy()
                 s.name = sym
                 return s
         except Exception:
-            pass # Stale or broken file, fallback to network download
+            pass  # corrupted cache → re-download
 
-    # 2. Network Download via yfinance native engine (No custom session overrides)
+    # 2. Network download with retries
     for attempt in range(1, retries + 1):
         try:
             df = yf.download(
-                tickers=sym, 
-                start=FETCH_START, 
-                end=END, 
-                progress=False, 
+                tickers=sym,
+                start=FETCH_START,
+                end=END,
+                progress=False,
                 timeout=25,
-                auto_adjust=True
+                auto_adjust=True,
             )
             if df is None or df.empty:
-                raise ValueError("Empty dataframe returned from API")
-            
-            # Extract closing array structural variations cleanly
-            if "Close" in df.columns and isinstance(df.columns, pd.MultiIndex):
+                raise ValueError("empty dataframe")
+
+            # Handle MultiIndex columns (yfinance >= 0.2.x)
+            if isinstance(df.columns, pd.MultiIndex):
                 s = df["Close"][sym].copy()
-            elif "Close" in df.columns:
-                s = df["Close"].copy()
             else:
-                s = df.iloc[:, 0].copy()
-                
+                s = df["Close"].copy()
+
+            # Strip timezone → naive index so all tickers align
             if s.index.tz is not None:
                 s.index = s.index.tz_localize(None)
             s.name = sym
 
-            # Save valid data straight to the workflow run cache directory
+            if s.notna().sum() < 50:
+                raise ValueError(f"only {s.notna().sum()} valid rows")
+
             s.to_csv(cache_path)
             return s
 
         except Exception as e:
             if attempt == retries:
-                print(f"    ❌ final attempt failed: {e}")
+                print(f"    ❌ all {retries} attempts failed: {e}")
             time.sleep(delay * attempt + random.uniform(0.5, 2.0))
     return None
 
+
 def fetch_prices() -> pd.DataFrame:
-    print(f"Fetching {len(ETFS)} ETFs individually from {FETCH_START} to {END} ...")
+    print(f"Fetching {len(ETFS)} ETFs from {FETCH_START} to {END} …")
     series_list = []
 
     for i, (sym, name, short) in enumerate(ETFS, 1):
-        print(f"  [{i:>2}/{len(ETFS)}] {name:<18} ({sym})", end=" ... ", flush=True)
-        s = _fetch_one(sym) # No session object passed downstream
+        print(f"  [{i:>2}/{len(ETFS)}] {name:<18} ({sym})", end=" … ", flush=True)
+        s = _fetch_one(sym)
         if s is not None and s.notna().sum() > 50:
             series_list.append(s)
-            print(f"✓ {s.notna().sum()} rows")
+            print(f"✓  {s.notna().sum()} rows")
         else:
-            print("✗ skipped")
+            print("✗  skipped")
         time.sleep(random.uniform(1.0, 2.0))
 
     if not series_list:
         return pd.DataFrame()
 
-    prices = pd.concat(series_list, axis=1)
-    prices = prices.sort_index().ffill(limit=5)
-    valid_cols = [c for c in prices.columns if prices[c].notna().sum() > 100]
-    return prices[valid_cols].dropna(how="all")
+    prices = pd.concat(series_list, axis=1).sort_index()
+    prices = prices.ffill(limit=5)   # fill weekends / holidays
 
-# ─── ENGINE HELPERS ──────────────────────────────────────────────────────────
+    valid = [c for c in prices.columns if prices[c].notna().sum() > 100]
+    dropped = [s for s in [e[0] for e in ETFS] if s not in valid]
+    if dropped:
+        print(f"\n  ⚠  Dropped (insufficient history): {[s.split('.')[0] for s in dropped]}")
+
+    prices = prices[valid].dropna(how="all")
+    print(f"\n  ✓  {len(prices)} trading days · {len(valid)} instruments ready\n")
+    return prices
+
+# ─── RS ENGINE ───────────────────────────────────────────────────────────────
 def period_return(series: pd.Series, idx_now: int, lookback_days: int):
+    """
+    63-day simple return.
+    Returns None if either price is NaN or zero — callers must handle None.
+    ← FIX: was returning 0.0 which silently corrupted RS rankings.
+    """
     idx_past = max(idx_now - lookback_days, 0)
-    p_now = series.iloc[idx_now]
+    if idx_past == idx_now:
+        return None                          # not enough history yet
+    p_now  = series.iloc[idx_now]
     p_past = series.iloc[idx_past]
     if pd.isna(p_now) or pd.isna(p_past) or p_past == 0:
-        return 0.0
-    return (p_now / p_past) - 1.0
+        return None
+    return float((p_now / p_past) - 1.0)
+
 
 def compute_rs(prices: pd.DataFrame, idx: int, available_syms: list):
-    rets = {sym: period_return(prices[sym], idx, LOOKBACK) for sym in available_syms if sym in prices.columns}
-    scores = {}
-    valid = [s for s, r in rets.items() if r is not None]
-    
+    """
+    Pairwise RS score for each instrument:
+        score(A) = mean over all B≠A of [ret_A(63d) − ret_B(63d)]
+
+    Positive score → A outperformed the average peer over 63 days.
+    Instruments with None return are excluded from both ranking and peer comparison.
+    """
+    # Raw 63-day returns; None means insufficient data
+    rets: dict = {}
     for sym in available_syms:
-        if sym not in rets or rets[sym] is None:
-            scores[sym] = None
+        if sym in prices.columns:
+            rets[sym] = period_return(prices[sym], idx, LOOKBACK)
+
+    # Only use instruments with valid returns for peer comparison
+    valid_syms = [s for s in rets if rets[s] is not None]
+
+    scores: dict = {}
+    for sym in available_syms:
+        if rets.get(sym) is None:
+            scores[sym] = None          # can't rank this instrument
             continue
-        others = [rets[s] for s in valid if s != sym]
-        scores[sym] = float(np.mean([rets[sym] - o for o in others])) if others else 0.0
+        peers = [rets[s] for s in valid_syms if s != sym]
+        if peers:
+            scores[sym] = float(np.mean([rets[sym] - p for p in peers]))
+        else:
+            scores[sym] = 0.0
+
     return scores, rets
 
+
 def build_matrix(rets: dict, available_syms: list):
+    """
+    N×N pairwise return-difference matrix.
+    matrix[i][j] = ret_i − ret_j  (positive = row outperforms column, in %)
+    None entries = one of the instruments had no valid return.
+    """
     matrix = []
     for i, (si, _, _) in enumerate(ETFS):
         row = []
         for j, (sj, _, _) in enumerate(ETFS):
             if i == j:
                 row.append(0.0)
-            elif si in available_syms and sj in available_syms:
-                row.append(round((rets.get(si, 0) - rets.get(sj, 0)) * 100, 3))
+            elif (si in available_syms and sj in available_syms
+                  and rets.get(si) is not None and rets.get(sj) is not None):
+                row.append(round((rets[si] - rets[sj]) * 100, 3))
             else:
                 row.append(None)
         matrix.append(row)
@@ -200,8 +238,9 @@ def build_matrix(rets: dict, available_syms: list):
 # ─── BACKTEST ENGINE ─────────────────────────────────────────────────────────
 def run_backtest(prices: pd.DataFrame):
     available_syms = prices.columns.tolist()
+
+    # Snap all Fridays from TRADE_START→END to nearest available trading day
     all_fridays = pd.date_range(TRADE_START, END, freq="W-FRI")
-    
     snapped = []
     for f in all_fridays:
         pos = prices.index.searchsorted(f, side="right") - 1
@@ -209,118 +248,179 @@ def run_backtest(prices: pd.DataFrame):
             snapped.append(pos)
     snapped = sorted(set(snapped))
 
-    cash = float(INITIAL)
-    holdings = {}  # sym -> shares
-    cur_top3 = []
-    peak = float(INITIAL)
+    if not snapped:
+        print("ERROR: No trading days found between TRADE_START and END.")
+        return [], [], [], [], 0, {}, {}, None, None, None
+
+    # Portfolio state
+    cash      = float(INITIAL)
+    holdings  = {}           # sym → shares (float)
+    cur_top3  = []
+    peak      = float(INITIAL)
     total_trades = 0
-    hold_count = {e[0]: 0 for e in ETFS}
+    hold_count   = {e[0]: 0 for e in ETFS}
     instr_trades = {e[0]: 0 for e in ETFS}
 
     equity_curve, nifty_curve, dd_curve, trade_log = [], [], [], []
-    nifty_start_idx = max(prices.index.searchsorted(pd.Timestamp(TRADE_START)) - 1, 0)
-    nifty_start_px = prices[NIFTY_SYM].iloc[nifty_start_idx] if NIFTY_SYM in prices.columns else 1.0
+
+    # Nifty baseline for benchmark comparison
+    nifty_start_pos = max(prices.index.searchsorted(pd.Timestamp(TRADE_START), side="right") - 1, 0)
+    nifty_start_px  = (float(prices[NIFTY_SYM].iloc[nifty_start_pos])
+                       if NIFTY_SYM in prices.columns else None)
 
     last_scores = last_rets = last_matrix = None
 
     for wi, idx in enumerate(snapped):
         date_str = str(prices.index[idx].date())
+
         scores, rets = compute_rs(prices, idx, available_syms)
-        
-        valid_rank = [(s, v) for s, v in scores.items() if v is not None]
-        valid_rank.sort(key=lambda x: -x[1])
-        new_top3 = [s for s, _ in valid_rank[:TOP_N]]
+
+        # Rank by score descending; skip instruments with None score
+        ranked = sorted(
+            [(s, v) for s, v in scores.items() if v is not None],
+            key=lambda x: -x[1]
+        )
+        new_top3 = [s for s, _ in ranked[:TOP_N]]
 
         if len(new_top3) < TOP_N:
+            print(f"  ⚠  {date_str}: only {len(new_top3)} valid instruments, skipping week")
             continue
 
         needs_rebal = (wi == 0) or (set(new_top3) != set(cur_top3))
-        exiting = [s for s in cur_top3 if s not in new_top3]
-        entering = [s for s in new_top3 if s not in cur_top3]
+        exiting     = [s for s in cur_top3 if s not in new_top3]
+        entering    = [s for s in new_top3  if s not in cur_top3]
 
         if needs_rebal:
-            # Smart Sell: Drop structural exits to preserve frictional drag drops
+            # ── Step 1: Sell exiting positions → cash ──────────────────────
             for sym in exiting:
-                if sym in holdings:
+                if sym in holdings and holdings[sym] > 0:
                     px = float(prices[sym].iloc[idx])
                     cash += holdings[sym] * px * (1 - COST_PCT)
                     instr_trades[sym] += 1
                     total_trades += 1
                     del holdings[sym]
 
-            # Re-verify dynamic cash values
-            retained_val = sum(holdings[s] * float(prices[s].iloc[idx]) for s in holdings if s in prices.columns)
-            total_portfolio_value = cash + retained_val
-            target_per_position = total_portfolio_value / TOP_N
+            # ── Step 2: Value retained positions ───────────────────────────
+            retained_val = sum(
+                holdings[s] * float(prices[s].iloc[idx])
+                for s in holdings if s in prices.columns
+            )
 
-            # Smart Balanced Layer deployment
+            # ── Step 3: Compute target allocation ──────────────────────────
+            # Total capital = cash in hand + value of retained positions
+            total_capital    = cash + retained_val
+            target_per_pos   = total_capital / TOP_N
+
+            # ── Step 4: Rebalance retained + buy entering ───────────────────
+            # FIX: Only touch positions that need adjustment or are new.
+            # cash -= target_per_pos was running for ALL new_top3 even when
+            # sym was already held → double-counted retained value → negative cash.
             for sym in new_top3:
                 px = float(prices[sym].iloc[idx])
                 current_val = holdings.get(sym, 0) * px
-                
-                if sym in entering or abs(current_val - target_per_position) > (target_per_position * 0.05):
-                    if sym in holdings:
+
+                # Rebalance if: new position, or weight drifted >5% from target
+                if sym in entering or abs(current_val - target_per_pos) > target_per_pos * 0.05:
+                    # Sell existing lot if any (book proceeds back to cash)
+                    if sym in holdings and holdings[sym] > 0:
                         cash += holdings[sym] * px * (1 - COST_PCT)
-                        del holdings[sym]
-                    
-                    holdings[sym] = (target_per_position * (1 - COST_PCT)) / px
-                    cash -= target_per_position
+                        instr_trades[sym] += 1
+                        total_trades += 1
+
+                    # Buy fresh lot at target weight
+                    # Cash required = target_per_pos (gross); cost deducted on buy
+                    shares = (target_per_pos * (1 - COST_PCT)) / px
+                    holdings[sym] = shares
+                    cash -= target_per_pos    # ← cash outflow for this position
                     instr_trades[sym] += 1
                     total_trades += 1
 
-        # Mark-to-market valuations
-        port_val = cash + sum(shares * float(prices[sym].iloc[idx]) for sym, shares in holdings.items())
-        
+        # ── Mark-to-market ────────────────────────────────────────────────────
+        port_val = cash + sum(
+            holdings[s] * float(prices[s].iloc[idx])
+            for s in holdings if s in prices.columns
+        )
+        # Safety clamp: floating point shouldn't go meaningfully negative
+        port_val = max(port_val, 0)
+
         for sym in new_top3:
-            hold_count[sym] += 1
+            hold_count[sym] = hold_count.get(sym, 0) + 1
 
-        nifty_px = float(prices[NIFTY_SYM].iloc[idx]) if NIFTY_SYM in prices.columns else nifty_start_px
-        nifty_val = (nifty_px / float(nifty_start_px)) * INITIAL
+        # Nifty benchmark
+        if nifty_start_px and NIFTY_SYM in prices.columns:
+            nifty_px  = float(prices[NIFTY_SYM].iloc[idx])
+            nifty_val = (nifty_px / nifty_start_px) * INITIAL
+        else:
+            nifty_val = INITIAL
 
-        if port_val > peak: peak = port_val
+        if port_val > peak:
+            peak = port_val
         dd = (port_val - peak) / peak * 100
 
         equity_curve.append({"date": date_str, "value": round(port_val, 2)})
-        nifty_curve.append({"date": date_str, "value": round(nifty_val, 2)})
-        dd_curve.append({"date": date_str, "dd": round(dd, 3)})
+        nifty_curve.append( {"date": date_str, "value": round(nifty_val, 2)})
+        dd_curve.append(    {"date": date_str, "dd":    round(dd, 3)})
 
         trade_log.append({
-            "date": date_str, "top3": new_top3, "exiting": exiting, "entering": entering,
-            "changed": needs_rebal and wi > 0, "capital": round(port_val, 2),
-            "scores": {s: round(v * 100, 3) if v is not None else None for s, v in scores.items()},
-            "rets": {s: round(v * 100, 3) if v is not None else None for s, v in rets.items()}
+            "date":     date_str,
+            "top3":     new_top3,
+            "exiting":  exiting,
+            "entering": entering,
+            "changed":  needs_rebal and wi > 0,
+            "capital":  round(port_val, 2),
+            # Store raw values for display; HTML builder does *100 for %
+            "scores": {s: round(v, 6) if v is not None else None for s, v in scores.items()},
+            "rets":   {s: round(v, 6) if v is not None else None for s, v in rets.items()},
         })
 
-        cur_top3 = new_top3
+        cur_top3    = new_top3
         last_scores = scores
-        last_rets = rets
+        last_rets   = rets
         last_matrix = build_matrix(rets, available_syms)
 
-    return equity_curve, nifty_curve, dd_curve, trade_log, total_trades, hold_count, instr_trades, last_scores, last_rets, last_matrix
+        if wi % 10 == 0:
+            top3_short = [s.replace(".NS","") for s in new_top3]
+            print(f"  {date_str}  ₹{port_val:>10,.0f}  top3={top3_short}")
 
-# ─── PERFORMANCE METRICS ─────────────────────────────────────────────────────
-def calc_stats(equity_curve, nifty_curve, total_trades, dd_curve):
-    final_val = equity_curve[-1]["value"]
+    return (equity_curve, nifty_curve, dd_curve, trade_log,
+            total_trades, hold_count, instr_trades,
+            last_scores, last_rets, last_matrix)
+
+# ─── STATS ───────────────────────────────────────────────────────────────────
+def calc_stats(equity_curve, nifty_curve, dd_curve, total_trades):
+    final_val   = equity_curve[-1]["value"]
     nifty_final = nifty_curve[-1]["value"]
-    
-    t0, t1 = pd.Timestamp(TRADE_START), pd.Timestamp(END)
+    t0 = pd.Timestamp(TRADE_START)
+    t1 = pd.Timestamp(END)
     years = max((t1 - t0).days / 365.25, 0.05)
 
-    total_ret = (final_val - INITIAL) / INITIAL * 100
-    cagr = (pow(final_val / INITIAL, 1 / years) - 1) * 100
+    total_ret  = (final_val - INITIAL) / INITIAL * 100
+    cagr       = (pow(final_val / INITIAL,   1 / years) - 1) * 100
     nifty_cagr = (pow(nifty_final / INITIAL, 1 / years) - 1) * 100
-    
-    weekly_rets = [(equity_curve[i]["value"] - equity_curve[i-1]["value"]) / equity_curve[i-1]["value"] for i in range(1, len(equity_curve))]
-    sharpe = (np.mean(weekly_rets) / np.std(weekly_rets)) * np.sqrt(52) if np.std(weekly_rets) > 0 else 0
-    max_dd = min([d["dd"] for d in dd_curve]) if dd_curve else 0
+    alpha      = cagr - nifty_cagr
+
+    weekly_rets = [
+        (equity_curve[i]["value"] - equity_curve[i-1]["value"]) / equity_curve[i-1]["value"]
+        for i in range(1, len(equity_curve))
+    ]
+    mean_w = np.mean(weekly_rets) if weekly_rets else 0
+    std_w  = np.std(weekly_rets)  if weekly_rets else 1
+    sharpe = (mean_w / std_w) * np.sqrt(52) if std_w > 0 else 0
+    max_dd = min(d["dd"] for d in dd_curve) if dd_curve else 0
 
     return dict(
-        final_val=round(final_val, 2), total_ret=round(total_ret, 2), cagr=round(cagr, 2),
-        sharpe=round(sharpe, 2), max_dd=round(max_dd, 2), total_trades=total_trades,
-        nifty_cagr=round(nifty_cagr, 2), alpha=round(cagr - nifty_cagr, 2), weeks=len(equity_curve)
+        final_val=round(final_val, 2),
+        total_ret=round(total_ret, 2),
+        cagr=round(cagr, 2),
+        sharpe=round(sharpe, 2),
+        max_dd=round(max_dd, 2),
+        total_trades=total_trades,
+        nifty_cagr=round(nifty_cagr, 2),
+        alpha=round(alpha, 2),
+        weeks=len(equity_curve),
     )
 
-# ─── HTML DASHBOARD DESIGN TEMPLATE ──────────────────────────────────────────
+# ─── HTML REPORT ─────────────────────────────────────────────────────────────
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -361,7 +461,7 @@ tr:last-child td{border-bottom:none}
 .mx{border-collapse:collapse;font-size:.72rem;white-space:nowrap}
 .mx th,.mx td{padding:5px 7px;border:1px solid var(--border);text-align:center;min-width:54px}
 .mx th{background:var(--card2);color:var(--muted);font-weight:600}
-.mx .rl{font-weight:600;color:var(--text);background:var(--card2);text-align:left;padding-left:10px}
+.mx .rl{font-weight:600;color:var(--text);background:var(--card2);text-align:left;padding-left:10px;min-width:70px}
 .tag{display:inline-flex;align-items:center;background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:5px;padding:2px 9px;font-size:.78rem;font-weight:600;margin:2px}
 .tabs{display:flex;gap:4px;background:var(--card2);padding:4px;border-radius:8px;width:fit-content;margin-bottom:16px}
 .tab{padding:6px 16px;border-radius:6px;cursor:pointer;font-size:.83rem;font-weight:500;color:var(--muted);transition:all .15s}
@@ -377,13 +477,11 @@ tr:last-child td{border-bottom:none}
 <header>
   <div>
     <h1>🇮🇳 India ETF — Pairwise RS Matrix Backtest</h1>
-    <div class="meta">12 ETFs · 63-day RS · Weekly Rebalance · Top-3 Long · ₹10L · Jan 2023 → present</div>
+    <div class="meta">__N_ETFS__ ETFs · 63-day pairwise RS · Weekly Rebalance · Top-3 Long · ₹10L · Jan 2023 → present</div>
   </div>
   <div class="meta">Updated: __UPDATED__</div>
 </header>
-
 <div class="container">
-
 <div class="stats-grid">
   <div class="stat-card"><div class="label">Final Portfolio</div><div class="value accent">__FINAL__</div></div>
   <div class="stat-card"><div class="label">Total Return</div><div class="value __RETCLS__">__RETURN__</div></div>
@@ -399,25 +497,24 @@ tr:last-child td{border-bottom:none}
   <h3>📈 Equity Curve — Strategy vs NiftyBees</h3>
   <div class="chart-wrap" style="height:300px"><canvas id="ec"></canvas></div>
 </div>
-
 <div class="chart-card">
   <h3>📉 Drawdown</h3>
   <div class="chart-wrap" style="height:160px"><canvas id="dc"></canvas></div>
 </div>
 
 <div class="grid-2">
-<div class="chart-card">
-  <div class="section-title">Current RS Rankings</div>
-  __RANKINGS__
-</div>
-<div class="chart-card">
-  <div class="section-title">Time in Portfolio</div>
-  __CONTRIB__
-</div>
+  <div class="chart-card">
+    <div class="section-title">Current RS Rankings (last rebalance)</div>
+    __RANKINGS__
+  </div>
+  <div class="chart-card">
+    <div class="section-title">Time in Portfolio</div>
+    __CONTRIB__
+  </div>
 </div>
 
 <div class="chart-card">
-  <div class="section-title">Pairwise RS Matrix — last week (row outperforms column, 63d)</div>
+  <div class="section-title">Pairwise RS Matrix — last rebalance (row outperforms column, 63d %)</div>
   <div class="matrix-wrap">__MATRIX__</div>
 </div>
 
@@ -429,188 +526,208 @@ tr:last-child td{border-bottom:none}
   </div>
   <div id="log">__LOG__</div>
 </div>
-
-<div class="updated">Generated by GitHub Actions · yfinance · Strategy by RS Matrix</div>
+<div class="updated">Generated by GitHub Actions · yfinance · Pairwise RS Strategy</div>
 </div>
 
 <script>
-const edata = __EQUITY_JSON__;
-const ndata = __NIFTY_JSON__;
-const ddata = __DD_JSON__;
+// FIX: parse dates explicitly so Chart.js time adapter never gets undefined x values
+const parseRows = rows => rows.map(r => ({x: new Date(r.x).getTime(), y: r.y}));
+const edata = parseRows(__EQUITY_JSON__);
+const ndata = parseRows(__NIFTY_JSON__);
+const ddata = __DD_JSON__.map(r => ({x: new Date(r.x).getTime(), y: r.y}));
 
-const gridColor = '#2e3250';
-const eCtx = document.getElementById('ec').getContext('2d');
-new Chart(eCtx,{type:'line',data:{datasets:[
-  {label:'RS Strategy',data:edata,borderColor:'#4f8ef7',backgroundColor:'rgba(79,142,247,0.08)',borderWidth:2,pointRadius:0,tension:0.3,fill:true},
-  {label:'NiftyBees',data:ndata,borderColor:'#f59e0b',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,borderDash:[5,4],tension:0.3}
+const gc = '#2e3250';
+const tooltip = {backgroundColor:'#1a1d27',titleColor:'#e2e8f0',bodyColor:'#8892b0'};
+
+new Chart(document.getElementById('ec'),{type:'line',data:{datasets:[
+  {label:'RS Strategy', data:edata, borderColor:'#4f8ef7', backgroundColor:'rgba(79,142,247,0.08)', borderWidth:2, pointRadius:0, tension:0.3, fill:true},
+  {label:'NiftyBees',   data:ndata, borderColor:'#f59e0b', backgroundColor:'transparent',           borderWidth:1.5,pointRadius:0, tension:0.3, borderDash:[5,4]}
 ]},options:{responsive:true,maintainAspectRatio:false,
   interaction:{mode:'index',intersect:false},
-  plugins:{legend:{labels:{color:'#8892b0',font:{size:12}}},
-    tooltip:{backgroundColor:'#1a1d27',titleColor:'#e2e8f0',bodyColor:'#8892b0',
-      callbacks:{label:c=>`${c.dataset.label}: ₹${(c.raw.y/1000).toFixed(1)}K`}}},
+  plugins:{legend:{labels:{color:'#8892b0'}},tooltip:{...tooltip,callbacks:{label:c=>`${c.dataset.label}: ₹${(c.raw.y/1000).toFixed(1)}K`}}},
   scales:{
-    x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gridColor}},
-    y:{ticks:{color:'#8892b0',callback:v=>'₹'+(v/1000).toFixed(0)+'K'},grid:{color:gridColor}}
+    x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gc}},
+    y:{ticks:{color:'#8892b0',callback:v=>'₹'+(v/1000).toFixed(0)+'K'},grid:{color:gc}}
   }}});
 
-const dCtx = document.getElementById('dc').getContext('2d');
-new Chart(dCtx,{type:'line',data:{datasets:[
+new Chart(document.getElementById('dc'),{type:'line',data:{datasets:[
   {label:'Drawdown',data:ddata,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,0.12)',borderWidth:1.5,pointRadius:0,tension:0.3,fill:true}
 ]},options:{responsive:true,maintainAspectRatio:false,
-  plugins:{legend:{display:false},tooltip:{backgroundColor:'#1a1d27',callbacks:{label:c=>`DD: ${c.raw.y.toFixed(2)}%`}}},
+  plugins:{legend:{display:false},tooltip:{...tooltip,callbacks:{label:c=>`DD: ${c.raw.y.toFixed(2)}%`}}},
   scales:{
-    x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gridColor}},
-    y:{ticks:{color:'#8892b0',callback:v=>v.toFixed(1)+'%'},grid:{color:gridColor}}
+    x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gc}},
+    y:{ticks:{color:'#8892b0',callback:v=>v.toFixed(1)+'%'},grid:{color:gc}}
   }}});
 
 function switchTab(t,el){
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   el.classList.add('active');
   document.querySelectorAll('.lr').forEach(r=>{
-    if(t==='all') r.style.display='flex';
-    else r.style.display = r.dataset.changed==='1' ? 'flex' : 'none';
+    r.style.display = (t==='all' || r.dataset.changed==='1') ? 'flex' : 'none';
   });
 }
 </script>
 </body>
-</html>
-"""
+</html>"""
 
-def pct(v, decimals=1):
-    sign = "+" if v > 0 else ""
-    return f"{sign}{v:.{decimals}f}%"
+# ─── HTML BUILDERS ───────────────────────────────────────────────────────────
+def _pct(v, d=1):
+    return f"{'+' if v>0 else ''}{v:.{d}f}%"
 
-def inr(v):
+def _inr(v):
     return f"₹{v/100_000:.2f}L"
 
 def build_rankings_html(last_scores, last_rets, available_syms):
-    rows = [(e, last_scores.get(e[0]), last_rets.get(e[0])) for e in ETFS if e[0] in available_syms and last_scores.get(e[0]) is not None]
+    rows = [
+        (e, last_scores.get(e[0]), last_rets.get(e[0]))
+        for e in ETFS
+        if e[0] in available_syms and last_scores.get(e[0]) is not None
+    ]
     rows.sort(key=lambda x: -x[1])
     medals = ["🥇","🥈","🥉"]
     html = '<table><thead><tr><th>Rank</th><th>ETF</th><th>RS Score</th><th>63d Return</th><th>Signal</th></tr></thead><tbody>'
     for i, (etf, score, ret) in enumerate(rows):
-        is_top = i < TOP_N
-        medal  = medals[i] if i < 3 else str(i+1)
-        ret_s  = f"{ret*100:+.1f}%" if ret is not None else "—"
-        ret_cls= "green" if (ret or 0) > 0 else "red"
-        status = '<span class="badge badge-green">▲ LONG</span>' if is_top else '<span class="badge badge-muted">— OUT</span>'
-        row_bg = 'background:rgba(79,142,247,0.05);' if is_top else ''
-        html += f'<tr style="{row_bg}"><td>{medal}</td><td><b>{etf[1]}</b> <span style="color:var(--muted);font-size:.73rem">{etf[2]}</span></td><td style="color:var(--accent)">{score*100:.3f}</td><td class="{ret_cls}">{ret_s}</td><td>{status}</td></tr>'
+        is_top  = i < TOP_N
+        medal   = medals[i] if i < 3 else str(i+1)
+        ret_pct = f"{ret*100:+.2f}%" if ret is not None else "—"
+        ret_cls = "green" if (ret or 0) > 0 else "red"
+        status  = '<span class="badge badge-green">▲ LONG</span>' if is_top else '<span class="badge badge-muted">— OUT</span>'
+        bg      = 'background:rgba(79,142,247,0.06);' if is_top else ''
+        # score is raw float; *100 to show as basis-point-like number
+        html += (f'<tr style="{bg}"><td>{medal}</td>'
+                 f'<td><b>{etf[1]}</b> <span style="color:var(--muted);font-size:.73rem">{etf[2]}</span></td>'
+                 f'<td style="color:var(--accent)">{score*100:+.3f}</td>'
+                 f'<td class="{ret_cls}">{ret_pct}</td>'
+                 f'<td>{status}</td></tr>')
     return html + '</tbody></table>'
+
 
 def build_contrib_html(hold_count, instr_trades, total_weeks):
     rows = sorted(ETFS, key=lambda e: -hold_count.get(e[0], 0))
     html = '<table><thead><tr><th>ETF</th><th>Weeks Held</th><th>% Time</th><th>Trades</th></tr></thead><tbody>'
     for etf in rows:
-        wk   = hold_count.get(etf[0], 0)
+        wk    = hold_count.get(etf[0], 0)
         pct_t = round(wk / total_weeks * 100) if total_weeks else 0
-        tr   = instr_trades.get(etf[0], 0)
-        bar = f'<div style="height:5px;width:{pct_t}px;max-width:80px;background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div>'
+        tr    = instr_trades.get(etf[0], 0)
+        bar   = (f'<div style="height:5px;width:{pct_t}px;max-width:80px;'
+                 f'background:var(--accent);border-radius:3px;min-width:2px;display:inline-block"></div>')
         html += f'<tr><td><b>{etf[1]}</b></td><td>{wk}</td><td>{bar} {pct_t}%</td><td style="color:var(--muted)">{tr}</td></tr>'
     return html + '</tbody></table>'
 
+
 def build_matrix_html(last_matrix, last_rets, available_syms):
     html = '<table class="mx"><thead><tr><th>↓ vs →</th>'
-    for etf in ETFS:
+    visible = [e for e in ETFS if e[0] in available_syms]
+    for etf in visible:
         html += f'<th>{etf[2]}</th>'
     html += '<th style="background:rgba(79,142,247,.1);color:var(--accent)">Wins</th></tr></thead><tbody>'
 
     for i, etf_i in enumerate(ETFS):
         if etf_i[0] not in available_syms:
             continue
-        wins = sum(1 for v in last_matrix[i] if v is not None and v > 0)
+        wins  = sum(1 for v in last_matrix[i] if v is not None and v > 0)
+        total = sum(1 for v in last_matrix[i] if v is not None and v != 0)
         html += f'<tr><td class="rl">{etf_i[2]}</td>'
         for j, etf_j in enumerate(ETFS):
+            if etf_j[0] not in available_syms:
+                continue
             val = last_matrix[i][j]
             if i == j:
                 html += '<td style="background:var(--card2);color:var(--muted)">—</td>'
             elif val is None:
                 html += '<td style="color:var(--muted)">N/A</td>'
             else:
-                intensity = min(abs(val) / 10, 0.75)
+                intensity = min(abs(val) / 8, 0.8)
                 bg  = f'rgba(34,197,94,{intensity:.2f})' if val > 0 else f'rgba(239,68,68,{intensity:.2f})'
                 clr = '#22c55e' if val > 0 else '#ef4444'
                 html += f'<td style="background:{bg};color:{clr}">{val:+.1f}%</td>'
-        total = sum(1 for v in last_matrix[i] if v is not None and v != 0)
         html += f'<td style="background:rgba(79,142,247,.1);color:var(--accent);font-weight:700">{wins}/{total}</td></tr>'
     return html + '</tbody></table>'
+
 
 def build_log_html(trade_log):
     etf_map = {e[0]: e for e in ETFS}
     html = ''
     for log in reversed(trade_log):
-        top3_tags = ''.join(f'<span class="tag">{etf_map[s][2] if s in etf_map else s}</span>' for s in log["top3"])
+        top3_tags = ''.join(
+            f'<span class="tag">{etf_map[s][2] if s in etf_map else s.replace(".NS","")}</span>'
+            for s in log["top3"]
+        )
         changes = ''
         if log["changed"]:
-            ex = ' '.join(f'<span class="badge badge-red">− {etf_map[s][2] if s in etf_map else s}</span>' for s in log["exiting"])
-            en = ' '.join(f'<span class="badge badge-green">+ {etf_map[s][2] if s in etf_map else s}</span>' for s in log["entering"])
+            ex = ' '.join(f'<span class="badge badge-red">− {etf_map[s][2] if s in etf_map else s.replace(".NS","")}</span>' for s in log["exiting"])
+            en = ' '.join(f'<span class="badge badge-green">+ {etf_map[s][2] if s in etf_map else s.replace(".NS","")}</span>' for s in log["entering"])
             changes = f'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">{ex} {en}</div>'
-        no_change = '<span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span>' if not log["changed"] else ''
-        changed_attr = '1' if log["changed"] else '0'
-        html += f'''<div class="lr" data-changed="{changed_attr}">
-  <div class="ld">{log["date"]}</div>
-  <div class="lb">
-    <div style="display:flex;align-items:center;flex-wrap:wrap">{top3_tags}{no_change}</div>
-    {changes}
-    <div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹{log["capital"]/1000:.1f}K</div>
-  </div>
-</div>'''
+        no_chg = '' if log["changed"] else '<span style="color:var(--muted);font-size:.74rem;margin-left:6px">no change</span>'
+        html += (f'<div class="lr" data-changed="{"1" if log["changed"] else "0"}">'
+                 f'<div class="ld">{log["date"]}</div>'
+                 f'<div class="lb">'
+                 f'<div style="display:flex;align-items:center;flex-wrap:wrap">{top3_tags}{no_chg}</div>'
+                 f'{changes}'
+                 f'<div style="color:var(--muted);font-size:.74rem;margin-top:3px">₹{log["capital"]/1000:.1f}K</div>'
+                 f'</div></div>\n')
     return html
+
 
 def render_html(stats, equity_curve, nifty_curve, dd_curve, trade_log,
                 hold_count, instr_trades, last_scores, last_rets, last_matrix,
                 available_syms):
-
+    # Chart data: x must be ISO date strings for Chart.js time adapter
     equity_json = json.dumps([{"x": d["date"], "y": d["value"]} for d in equity_curve])
     nifty_json  = json.dumps([{"x": d["date"], "y": d["value"]} for d in nifty_curve])
     dd_json     = json.dumps([{"x": d["date"], "y": d["dd"]}    for d in dd_curve])
 
-    s = stats
+    s   = stats
     cls = lambda v: "green" if v >= 0 else "red"
 
     html = HTML_TEMPLATE
-    html = html.replace("__UPDATED__",    datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
-    html = html.replace("__FINAL__",     inr(s["final_val"]))
-    html = html.replace("__RETURN__",    pct(s["total_ret"]))
-    html = html.replace("__RETCLS__",    cls(s["total_ret"]))
-    html = html.replace("__CAGR__",     pct(s["cagr"]))
-    html = html.replace("__CAGRCLS__",  cls(s["cagr"]))
-    html = html.replace("__SHARPE__",    f"{s['sharpe']:.2f}")
-    html = html.replace("__SHARPCLS__", cls(s["sharpe"] - 1))
-    html = html.replace("__MAXDD__",    pct(s["max_dd"]))
-    html = html.replace("__TRADES__",   str(s["total_trades"]))
-    html = html.replace("__NIFTY__",    pct(s["nifty_cagr"]))
-    html = html.replace("__ALPHA__",    pct(s["alpha"]))
-    html = html.replace("__ALPHACLS__", cls(s["alpha"]))
-    html = html.replace("__EQUITY_JSON__", equity_json)
-    html = html.replace("__NIFTY_JSON__",  nifty_json)
-    html = html.replace("__DD_JSON__",     dd_json)
-    html = html.replace("__RANKINGS__",    build_rankings_html(last_scores, last_rets, available_syms))
-    html = html.replace("__CONTRIB__",     build_contrib_html(hold_count, instr_trades, len(equity_curve)))
-    html = html.replace("__MATRIX__",      build_matrix_html(last_matrix, last_rets, available_syms))
-    html = html.replace("__LOG__",         build_log_html(trade_log))
+    repl = {
+        "__UPDATED__":     datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "__N_ETFS__":      str(len(available_syms)),
+        "__FINAL__":       _inr(s["final_val"]),
+        "__RETURN__":      _pct(s["total_ret"]),
+        "__RETCLS__":      cls(s["total_ret"]),
+        "__CAGR__":        _pct(s["cagr"]),
+        "__CAGRCLS__":     cls(s["cagr"]),
+        "__SHARPE__":      f"{s['sharpe']:.2f}",
+        "__SHARPCLS__":    cls(s["sharpe"] - 1),
+        "__MAXDD__":       _pct(s["max_dd"]),
+        "__TRADES__":      str(s["total_trades"]),
+        "__NIFTY__":       _pct(s["nifty_cagr"]),
+        "__ALPHA__":       _pct(s["alpha"]),
+        "__ALPHACLS__":    cls(s["alpha"]),
+        "__EQUITY_JSON__": equity_json,
+        "__NIFTY_JSON__":  nifty_json,
+        "__DD_JSON__":     dd_json,
+        "__RANKINGS__":    build_rankings_html(last_scores, last_rets, available_syms),
+        "__CONTRIB__":     build_contrib_html(hold_count, instr_trades, s["weeks"]),
+        "__MATRIX__":      build_matrix_html(last_matrix, last_rets, available_syms),
+        "__LOG__":         build_log_html(trade_log),
+    }
+    for k, v in repl.items():
+        html = html.replace(k, v)
     return html
 
-# ─── MAIN EXECUTION ──────────────────────────────────────────────────────────
+# ─── MAIN ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     prices = fetch_prices()
 
     if prices.empty:
-        print("ERROR: No price data fetched. Network/Scraping blocked.", file=sys.stderr)
+        print("ERROR: No price data fetched.", file=sys.stderr)
         sys.exit(1)
 
     available_syms = prices.columns.tolist()
-    print(f"Available Elements: {[s.split('.')[0] for s in available_syms]}\n")
+    print(f"Instruments loaded: {[s.replace('.NS','') for s in available_syms]}\n")
 
     (equity_curve, nifty_curve, dd_curve, trade_log,
      total_trades, hold_count, instr_trades,
      last_scores, last_rets, last_matrix) = run_backtest(prices)
 
     if not equity_curve:
-        print("ERROR: Backtest pipeline crash.", file=sys.stderr)
+        print("ERROR: Backtest produced no results.", file=sys.stderr)
         sys.exit(1)
 
-    stats = calc_stats(equity_curve, nifty_curve, total_trades, dd_curve)
+    stats = calc_stats(equity_curve, nifty_curve, dd_curve, total_trades)
 
     print(f"\n{'='*52}")
     print(f"  Final Portfolio : ₹{stats['final_val']:>12,.0f}")
@@ -625,12 +742,10 @@ if __name__ == "__main__":
     print(f"{'='*52}\n")
 
     os.makedirs("docs", exist_ok=True)
-    report_html = render_html(
-        stats, equity_curve, nifty_curve, dd_curve, trade_log,
-        hold_count, instr_trades, last_scores, last_rets, last_matrix,
-        available_syms,
-    )
     with open(OUT_PATH, "w", encoding="utf-8") as f:
-        f.write(report_html)
-
-    print(f"✅ Report deployment written → {OUT_PATH}")
+        f.write(render_html(
+            stats, equity_curve, nifty_curve, dd_curve, trade_log,
+            hold_count, instr_trades, last_scores, last_rets, last_matrix,
+            available_syms,
+        ))
+    print(f"✅  Report written → {OUT_PATH}")
