@@ -267,21 +267,30 @@ def build_matrix(rets: dict, available_syms: list):
 def run_backtest(prices: pd.DataFrame):
     available_syms = prices.columns.tolist()
 
-    # Snap Fridays from TRADE_START → END to nearest available trading day
+    # ── Signal/Execution separation (NO look-ahead bias) ─────────────────────
+    # Signal  : Friday close  → compute RS, decide new top-3
+    # Execution: Next trading day close (Monday) → trade at that price
+    # This mirrors real trading: you can't buy at the same close you screened on.
     all_fridays = pd.date_range(TRADE_START, END, freq="W-FRI")
-    snapped = []
+    signal_exec_pairs = []   # list of (signal_idx, exec_idx)
     for f in all_fridays:
-        pos = prices.index.searchsorted(f, side="right") - 1
-        if 0 <= pos < len(prices):
-            snapped.append(pos)
-    snapped = sorted(set(snapped))
+        sig_pos = prices.index.searchsorted(f, side="right") - 1
+        if sig_pos < 0 or sig_pos >= len(prices):
+            continue
+        # Next trading day after Friday = execution day
+        exec_pos = sig_pos + 1
+        if exec_pos >= len(prices):
+            continue       # no next day yet (last week of data)
+        signal_exec_pairs.append((sig_pos, exec_pos))
 
-    if not snapped:
-        print(f"ERROR: No trading days found between {TRADE_START} and {END}.")
+    if not signal_exec_pairs:
+        print(f"ERROR: No valid signal/execution pairs found.")
         return [], [], [], [], 0, {}, {}, None, None, None
 
-    print(f"Backtest: {len(snapped)} weekly rebalance points from "
-          f"{prices.index[snapped[0]].date()} to {prices.index[snapped[-1]].date()}\n")
+    print(f"Backtest: {len(signal_exec_pairs)} weeks  |  "
+          f"signals {prices.index[signal_exec_pairs[0][0]].date()} → "
+          f"{prices.index[signal_exec_pairs[-1][0]].date()}  |  "
+          f"execution next trading day (Mon close)\n")
 
     cash         = float(INITIAL)
     holdings     = {}           # sym → shares
@@ -293,14 +302,18 @@ def run_backtest(prices: pd.DataFrame):
 
     equity_curve, nifty_curve, dd_curve, trade_log = [], [], [], []
 
-    nifty_start_pos = max(prices.index.searchsorted(pd.Timestamp(TRADE_START), side="right") - 1, 0)
-    nifty_start_px  = float(prices[NIFTY_SYM].iloc[nifty_start_pos]) if NIFTY_SYM in prices.columns else None
+    # Nifty baseline at first execution day (Monday after first signal Friday)
+    first_exec_pos  = signal_exec_pairs[0][1]
+    nifty_start_px  = float(prices[NIFTY_SYM].iloc[first_exec_pos]) if NIFTY_SYM in prices.columns else None
 
     last_scores = last_rets = last_matrix = None
 
-    for wi, idx in enumerate(snapped):
-        date_str = str(prices.index[idx].date())
-        scores, rets = compute_rs(prices, idx, available_syms)
+    for wi, (sig_idx, exec_idx) in enumerate(signal_exec_pairs):
+        # sig_idx  = Friday close → used for RS computation (signal)
+        # exec_idx = Monday close → used for trade execution (price)
+        date_str = str(prices.index[sig_idx].date())   # label by signal date
+        exec_date = str(prices.index[exec_idx].date()) # actual trade date
+        scores, rets = compute_rs(prices, sig_idx, available_syms)
 
         # Rank: descending by score, skip None
         ranked   = sorted([(s, v) for s, v in scores.items() if v is not None], key=lambda x: -x[1])
@@ -318,7 +331,7 @@ def run_backtest(prices: pd.DataFrame):
             # Step 1: liquidate exiting positions
             for sym in exiting:
                 if sym in holdings and holdings[sym] > 0:
-                    px    = float(prices[sym].iloc[idx])
+                    px    = float(prices[sym].iloc[exec_idx])   # Monday execution price
                     cash += holdings[sym] * px * (1 - COST_PCT)
                     instr_trades[sym] += 1
                     total_trades      += 1
@@ -326,7 +339,7 @@ def run_backtest(prices: pd.DataFrame):
 
             # Step 2: measure retained position values
             retained_val = sum(
-                holdings[s] * float(prices[s].iloc[idx])
+                holdings[s] * float(prices[s].iloc[exec_idx])   # Monday prices
                 for s in holdings if s in prices.columns
             )
 
@@ -336,7 +349,7 @@ def run_backtest(prices: pd.DataFrame):
 
             # Step 4: rebalance each top-3 slot
             for sym in new_top3:
-                px          = float(prices[sym].iloc[idx])
+                px          = float(prices[sym].iloc[exec_idx])   # Monday execution price
                 current_val = holdings.get(sym, 0) * px
                 drift       = abs(current_val - target_per_pos)
 
@@ -348,15 +361,15 @@ def run_backtest(prices: pd.DataFrame):
                         instr_trades[sym] += 1
                         total_trades      += 1
 
-                    # Buy fresh lot at target weight
+                    # Buy fresh lot at Monday execution price
                     cash          -= target_per_pos
-                    holdings[sym]  = (target_per_pos * (1 - COST_PCT)) / px
+                    holdings[sym]  = (target_per_pos * (1 - COST_PCT)) / px  # px already exec_idx
                     instr_trades[sym] += 1
                     total_trades      += 1
 
-        # Mark-to-market
+        # Mark-to-market at execution price (Monday close)
         port_val = max(
-            cash + sum(holdings[s] * float(prices[s].iloc[idx])
+            cash + sum(holdings[s] * float(prices[s].iloc[exec_idx])
                        for s in holdings if s in prices.columns),
             0
         )
@@ -364,7 +377,7 @@ def run_backtest(prices: pd.DataFrame):
         for sym in new_top3:
             hold_count[sym] = hold_count.get(sym, 0) + 1
 
-        nifty_px  = float(prices[NIFTY_SYM].iloc[idx]) if NIFTY_SYM in prices.columns else None
+        nifty_px  = float(prices[NIFTY_SYM].iloc[exec_idx]) if NIFTY_SYM in prices.columns else None
         nifty_val = (nifty_px / nifty_start_px * INITIAL) if nifty_px and nifty_start_px else INITIAL
 
         if port_val > peak:
@@ -375,14 +388,15 @@ def run_backtest(prices: pd.DataFrame):
         nifty_curve.append( {"date": date_str, "value": round(nifty_val, 2)})
         dd_curve.append(    {"date": date_str, "dd":    round(dd, 3)})
         trade_log.append({
-            "date":     date_str,
-            "top3":     new_top3,
-            "exiting":  exiting,
-            "entering": entering,
-            "changed":  needs_rebal and wi > 0,
-            "capital":  round(port_val, 2),
-            "scores":   {s: round(v, 6) if v is not None else None for s, v in scores.items()},
-            "rets":     {s: round(v, 6) if v is not None else None for s, v in rets.items()},
+            "date":      date_str,    # Friday signal date
+            "exec_date": exec_date,   # Monday execution date
+            "top3":      new_top3,
+            "exiting":   exiting,
+            "entering":  entering,
+            "changed":   needs_rebal and wi > 0,
+            "capital":   round(port_val, 2),
+            "scores":    {s: round(v, 6) if v is not None else None for s, v in scores.items()},
+            "rets":      {s: round(v, 6) if v is not None else None for s, v in rets.items()},
         })
 
         cur_top3    = new_top3
@@ -608,7 +622,9 @@ def log_html(trade_log):
             chg = f'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">{ex} {en}</div>'
         nc  = '' if lg["changed"] else '<span style="color:var(--muted);font-size:.72rem;margin-left:5px">no change</span>'
         c   = '1' if lg["changed"] else '0'
-        h  += (f'<div class="lr" data-c="{c}"><div class="ld">{lg["date"]}</div>'
+        exec_d = lg.get("exec_date", "")
+        exec_label = f'<span style="color:var(--muted);font-size:.68rem;display:block">exec {exec_d}</span>' if exec_d else ""
+        h  += (f'<div class="lr" data-c="{c}"><div class="ld">{lg["date"]}{exec_label}</div>'
                f'<div class="lb2"><div style="display:flex;align-items:center;flex-wrap:wrap">{tags}{nc}</div>'
                f'{chg}<div style="color:var(--muted);font-size:.72rem;margin-top:2px">₹{lg["capital"]/1000:.1f}K</div>'
                f'</div></div>\n')
