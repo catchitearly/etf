@@ -24,25 +24,49 @@ warnings.filterwarnings("ignore")
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 ETFS = [
-    ("GOLDBEES.NS",   "GoldBees",      "GOLD"),
-    ("SILVERBEES.NS", "SilverBees",    "SILV"),
-    ("LTGILTBEES",     "GS Composite",  "GSCP"),
-    ("NIFTYBEES.NS",  "NiftyBees",     "NFTY"),
-    ("JUNIORBEES.NS", "JuniorBees",    "JNBR"),
-    ("BANKBEES.NS",   "BankBees",      "BANK"),
-    ("ITBEES.NS",     "ITBees",        "ITMC"),
-    ("PSUBNKBEES.NS", "PSUBankBees",   "PSUB"),
-    ("PHARMABEES.NS", "PharmaBees",    "PHRM"),
-    ("AUTOBEES.NS",   "AutoBees",      "AUTO"),
-    ("MOM100.NS",     "Momentum100",   "MOM" ),
-    ("INFRABEES.NS",  "InfraBees",     "INFR"),
+    # --- Commodities ---
+    ("GOLDBEES.NS",    "GoldBees",      "GOLD"),
+    ("SILVERBEES.NS",  "SilverBees",    "SILV"),
+
+    # --- Core Broad Market Indices ---
+    ("NIFTYBEES.NS",   "NiftyBees",      "NFTY"),
+    ("JUNIORBEES.NS",  "JuniorBees",     "JNBR"),
+    ("MID150BEES.NS",  "Midcap150Bees",  "MIDM"),
+    ("NIF100BEES.NS",  "Nifty100Bees",   "NF10"),
+
+    # --- Sectoral Indices ---
+    ("BANKBEES.NS",    "BankBees",       "BANK"),
+    ("ITBEES.NS",      "ITBees",         "ITMC"),
+    ("PHARMABEES.NS",  "PharmaBees",     "PHRM"),
+    ("AUTOBEES.NS",    "AutoBees",       "AUTO"),
+    ("INFRABEES.NS",   "InfraBees",      "INFR"),
+    ("CONSUMBEES.NS",  "ConsumeBees",    "CNSM"),
+
+    # --- PSU, Government & Theme-Based ---
+    ("PSUBNKBEES.NS",  "PSUBankBees",    "PSUB"),
+    ("CPSEBEES.NS",    "CPSEBees",       "CPSE"),
+    ("CPSEETF.NS",     "CPSE_ETF",       "CETF"),
+
+    # --- Debt & Fixed Income (G-Sec) ---
+    ("LTGILTBEES.NS",  "GS Composite",   "GSCP"),  # Formatted with .NS suffix for yfinance
+    ("GILT5YBEES.NS",  "GSec5YearBees",  "GS5Y"),
+    ("LIQUIDBEES.NS",  "LiquidBees",     "LIQD"),
+
+    # --- Smart Beta, Factor & International ---
+    ("MOM100.NS",      "Momentum100",    "MOM" ),
+    ("MOMENTUM30.NS",  "Momentum30Bees", "MOM3"),
+    ("NV20BEES.NS",    "Value20Bees",    "NV20"),
+    ("DIVOPPBEES.NS",  "DivOppBees",     "DIVO"),
+    ("HNGSNGBEES.NS",  "HangSengBees",   "HNGS"),
+    ("MAFANG.NS",      "FANGPlusETF",    "FANG"),
+    ("MON100.NS",      "Nasdaq100ETF",   "NSDQ"),
 ]
 
 LOOKBACK     = 63
 TOP_N        = 3
 COST_PCT     = 0.001       # 0.1%
 INITIAL      = 1_000_000   # ₹10 Lakh
-FETCH_START  = "2025-01-01"
+FETCH_START  = "2022-01-01"
 TRADE_START  = "2026-06-18"
 END          = date.today().strftime("%Y-%m-%d")
 NIFTY_SYM    = "NIFTYBEES.NS"
