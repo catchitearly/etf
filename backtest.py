@@ -80,7 +80,7 @@ INITIAL     = 1_000_000     # ₹10 lakh
 # Using "2022-06-01" gives ~7 months of buffer before "2023-01-01" → plenty.
 TRADE_START = "2023-01-01"   # ← backtest begins here
 FETCH_START = "2022-06-01"   # ← data fetch begins here (lookback buffer)
-END         = "2025-12-31"    #date.today().strftime("%Y-%m-%d")
+END         = date.today().strftime("%Y-%m-%d")
 
 NIFTY_SYM   = "NIFTYBEES.NS"
 OUT_PATH    = "docs/index.html"
@@ -439,8 +439,7 @@ HTML = r"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>India ETF RS Backtest</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
+
 <style>
 :root{--bg:#0f1117;--card:#1a1d27;--card2:#22263a;--border:#2e3250;--accent:#4f8ef7;--green:#22c55e;--red:#ef4444;--text:#e2e8f0;--muted:#8892b0}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -502,8 +501,8 @@ tr:last-child td{border-bottom:none}
   <div class="sc"><div class="lb">Nifty CAGR</div><div class="vl">__NFC__</div></div>
   <div class="sc"><div class="lb">Alpha vs Nifty</div><div class="vl __AC__">__ALF__</div></div>
 </div>
-<div class="cc"><h3>📈 Equity Curve — Strategy vs NiftyBees</h3><div class="cw" style="height:300px"><canvas id="ec"></canvas></div></div>
-<div class="cc"><h3>📉 Drawdown</h3><div class="cw" style="height:155px"><canvas id="dc"></canvas></div></div>
+<div class="cc"><h3>📈 Equity Curve — Strategy vs NiftyBees</h3><div class="cw" style="height:300px;position:relative"><canvas id="ec" style="position:absolute;inset:0;width:100%!important;height:100%!important"></canvas></div></div>
+<div class="cc"><h3>📉 Drawdown</h3><div class="cw" style="height:155px;position:relative"><canvas id="dc" style="position:absolute;inset:0;width:100%!important;height:100%!important"></canvas></div></div>
 <div class="g2">
   <div class="cc"><div class="st">Current RS Rankings</div>__RANK__</div>
   <div class="cc"><div class="st">Time in Portfolio</div>__CONTRIB__</div>
@@ -516,28 +515,72 @@ tr:last-child td{border-bottom:none}
 </div>
 <div class="upd">GitHub Actions · yfinance · Pairwise RS Strategy · data from __FSTART__ · trades from __TSTART__</div>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script>
-const toTs = rows => rows.map(r=>({x:new Date(r.x).getTime(),y:r.y}));
+window.addEventListener('load', function() {
+  const rawEq = __EQ__;
+  const rawNf = __NF__;
+  const rawDd = __DD__;
+  const toTs  = rows => rows.map(r => ({x: new Date(r.x).getTime(), y: r.y}));
+  const ed = toTs(rawEq);
+  const nd = toTs(rawNf);
+  const dd = rawDd.map(r => ({x: new Date(r.x).getTime(), y: r.y}));
+  const gc = '#2e3250';
+  const tt = {backgroundColor:'#1a1d27', titleColor:'#e2e8f0', bodyColor:'#8892b0'};
 
-const ed = __EQ__.map(r => ({ x: new Date(r.date).getTime(), y: r.value }));
-const nd = __NF__.map(r => ({ x: new Date(r.date).getTime(), y: r.value }));
-const dd = __DD__.map(r => ({ x: new Date(r.date).getTime(), y: r.dd }));
-const gc='#2e3250', tt={backgroundColor:'#1a1d27',titleColor:'#e2e8f0',bodyColor:'#8892b0'};
-new Chart(document.getElementById('ec'),{type:'line',data:{datasets:[
-  {label:'RS Strategy',data:ed,borderColor:'#4f8ef7',backgroundColor:'rgba(79,142,247,.08)',borderWidth:2,pointRadius:0,tension:.3,fill:true},
-  {label:'NiftyBees', data:nd,borderColor:'#f59e0b',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[5,4]}
-]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-  plugins:{legend:{labels:{color:'#8892b0'}},tooltip:{...tt,callbacks:{label:c=>`${c.dataset.label}: ₹${(c.raw.y/1000).toFixed(1)}K`}}},
-  scales:{x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gc}},
-          y:{ticks:{color:'#8892b0',callback:v=>'₹'+(v/1000).toFixed(0)+'K'},grid:{color:gc}}}}});
-new Chart(document.getElementById('dc'),{type:'line',data:{datasets:[
-  {label:'DD',data:dd,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.12)',borderWidth:1.5,pointRadius:0,tension:.3,fill:true}
-]},options:{responsive:true,maintainAspectRatio:false,
-  plugins:{legend:{display:false},tooltip:{...tt,callbacks:{label:c=>`DD: ${c.raw.y.toFixed(2)}%`}}},
-  scales:{x:{type:'time',time:{unit:'month'},ticks:{color:'#8892b0',maxTicksLimit:20},grid:{color:gc}},
-          y:{ticks:{color:'#8892b0',callback:v=>v.toFixed(1)+'%'},grid:{color:gc}}}}});
-function sw(t,el){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));el.classList.add('active');
-  document.querySelectorAll('.lr').forEach(r=>{r.style.display=(t==='all'||r.dataset.c==='1')?'flex':'none';});}
+  // Equity curve
+  new Chart(document.getElementById('ec'), {
+    type: 'line',
+    data: { datasets: [
+      {label:'RS Strategy', data:ed, borderColor:'#4f8ef7', backgroundColor:'rgba(79,142,247,.1)',
+       borderWidth:2, pointRadius:0, tension:.3, fill:true},
+      {label:'NiftyBees',   data:nd, borderColor:'#f59e0b', backgroundColor:'transparent',
+       borderWidth:1.5, pointRadius:0, tension:.3, borderDash:[5,4]}
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: {mode:'index', intersect:false},
+      plugins: {
+        legend: {labels: {color:'#8892b0', boxWidth:12}},
+        tooltip: {backgroundColor:'#1a1d27', titleColor:'#e2e8f0', bodyColor:'#8892b0',
+          callbacks: {label: c => c.dataset.label + ': ₹' + (c.raw.y/1000).toFixed(1) + 'K'}}
+      },
+      scales: {
+        x: {type:'time', time:{unit:'month'}, ticks:{color:'#8892b0', maxTicksLimit:18}, grid:{color:gc}},
+        y: {ticks:{color:'#8892b0', callback: v => '₹'+(v/1000).toFixed(0)+'K'}, grid:{color:gc}}
+      }
+    }
+  });
+
+  // Drawdown chart
+  new Chart(document.getElementById('dc'), {
+    type: 'line',
+    data: { datasets: [
+      {label:'Drawdown', data:dd, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.15)',
+       borderWidth:1.5, pointRadius:0, tension:.3, fill:true}
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {display:false},
+        tooltip: {backgroundColor:'#1a1d27', callbacks:{label: c => 'DD: '+c.raw.y.toFixed(2)+'%'}}
+      },
+      scales: {
+        x: {type:'time', time:{unit:'month'}, ticks:{color:'#8892b0', maxTicksLimit:18}, grid:{color:gc}},
+        y: {ticks:{color:'#8892b0', callback: v => v.toFixed(1)+'%'}, grid:{color:gc}}
+      }
+    }
+  });
+});
+
+function sw(t,el) {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.lr').forEach(r => {
+    r.style.display = (t==='all' || r.dataset.c==='1') ? 'flex' : 'none';
+  });
+}
 </script></body></html>"""
 
 def _p(v,d=1): return f"{'+' if v>0 else ''}{v:.{d}f}%"
@@ -634,30 +677,28 @@ def log_html(trade_log):
     return h
 
 def render(stats, eq, nf, dd, log, hc, it, ls, lr, lm, avail):
-    # Map data structures directly into x (date string) and y (value) formats
-    ej = json.dumps([{"x": str(d["date"]), "y": float(d["value"])} for d in eq])
-    nj = json.dumps([{"x": str(d["date"]), "y": float(d["value"])} for d in nf])
-    dj = json.dumps([{"x": str(d["date"]), "y": float(d["dd"])}    for d in dd])
-    
+    ej = json.dumps([{"x":d["date"],"y":d["value"]} for d in eq])
+    nj = json.dumps([{"x":d["date"],"y":d["value"]} for d in nf])
+    dj = json.dumps([{"x":d["date"],"y":d["dd"]}    for d in dd])
     s  = stats
     r  = {
-        "__N__":         str(len(avail)),
-        "__UPD__":       datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "__FSTART__":    FETCH_START,
-        "__TSTART__":    TRADE_START,
-        "__FINAL__":     _inr(s["final_val"]),
-        "__RET__":       _p(s["total_ret"]),  "__RC__": _cls(s["total_ret"]),
-        "__CAGR__":      _p(s["cagr"]),        "__CC__": _cls(s["cagr"]),
-        "__SHP__":       f"{s['sharpe']:.2f}","__SC__": _cls(s["sharpe"]-1),
-        "__MDD__":       _p(s["max_dd"]),
-        "__TRD__":       str(s["total_trades"]),
-        "__NFC__":       _p(s["nifty_cagr"]),
-        "__ALF__":       _p(s["alpha"]),      "__AC__": _cls(s["alpha"]),
-        "__EQ__":        ej, "__NF__": nj, "__DD__": dj,  # Injected directly as valid JSON arrays
-        "__RANK__":      rankings_html(ls, lr, avail),
-        "__CONTRIB__":   contrib_html(hc, it, s["weeks"]),
-        "__MATRIX__":    matrix_html(lm, lr, avail),
-        "__LOG__":       log_html(log),
+        "__N__":    str(len(avail)),
+        "__UPD__":  datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "__FSTART__": FETCH_START,
+        "__TSTART__": TRADE_START,
+        "__FINAL__":_inr(s["final_val"]),
+        "__RET__":  _p(s["total_ret"]),  "__RC__": _cls(s["total_ret"]),
+        "__CAGR__": _p(s["cagr"]),       "__CC__": _cls(s["cagr"]),
+        "__SHP__":  f"{s['sharpe']:.2f}","__SC__": _cls(s["sharpe"]-1),
+        "__MDD__":  _p(s["max_dd"]),
+        "__TRD__":  str(s["total_trades"]),
+        "__NFC__":  _p(s["nifty_cagr"]),
+        "__ALF__":  _p(s["alpha"]),      "__AC__": _cls(s["alpha"]),
+        "__EQ__":   ej, "__NF__": nj, "__DD__": dj,
+        "__RANK__":    rankings_html(ls, lr, avail),
+        "__CONTRIB__": contrib_html(hc, it, s["weeks"]),
+        "__MATRIX__":  matrix_html(lm, lr, avail),
+        "__LOG__":     log_html(log),
     }
     h = HTML
     for k,v in r.items(): h = h.replace(k,v)
