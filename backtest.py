@@ -634,31 +634,30 @@ def log_html(trade_log):
     return h
 
 def render(stats, eq, nf, dd, log, hc, it, ls, lr, lm, avail):
+    # Map data structures directly into x (date string) and y (value) formats
+    ej = json.dumps([{"x": str(d["date"]), "y": float(d["value"])} for d in eq])
+    nj = json.dumps([{"x": str(d["date"]), "y": float(d["value"])} for d in nf])
+    dj = json.dumps([{"x": str(d["date"]), "y": float(d["dd"])}    for d in dd])
     
-    ej = json.dumps([{"date": d["date"], "value": d["value"]} for d in eq])
-    nj = json.dumps([{"date": d["date"], "value": d["value"]} for d in nf])
-    dj = json.dumps([{"date": d["date"], "dd": d["dd"]} for d in dd])
-    nj = json.dumps([{"x":d["date"],"y":d["value"]} for d in nf])
-    dj = json.dumps([{"x":d["date"],"y":d["dd"]}    for d in dd])
     s  = stats
     r  = {
-        "__N__":    str(len(avail)),
-        "__UPD__":  datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "__FSTART__": FETCH_START,
-        "__TSTART__": TRADE_START,
-        "__FINAL__":_inr(s["final_val"]),
-        "__RET__":  _p(s["total_ret"]),  "__RC__": _cls(s["total_ret"]),
-        "__CAGR__": _p(s["cagr"]),       "__CC__": _cls(s["cagr"]),
-        "__SHP__":  f"{s['sharpe']:.2f}","__SC__": _cls(s["sharpe"]-1),
-        "__MDD__":  _p(s["max_dd"]),
-        "__TRD__":  str(s["total_trades"]),
-        "__NFC__":  _p(s["nifty_cagr"]),
-        "__ALF__":  _p(s["alpha"]),      "__AC__": _cls(s["alpha"]),
-        "__EQ__":   ej, "__NF__": nj, "__DD__": dj,
-        "__RANK__":    rankings_html(ls, lr, avail),
-        "__CONTRIB__": contrib_html(hc, it, s["weeks"]),
-        "__MATRIX__":  matrix_html(lm, lr, avail),
-        "__LOG__":     log_html(log),
+        "__N__":         str(len(avail)),
+        "__UPD__":       datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "__FSTART__":    FETCH_START,
+        "__TSTART__":    TRADE_START,
+        "__FINAL__":     _inr(s["final_val"]),
+        "__RET__":       _p(s["total_ret"]),  "__RC__": _cls(s["total_ret"]),
+        "__CAGR__":      _p(s["cagr"]),        "__CC__": _cls(s["cagr"]),
+        "__SHP__":       f"{s['sharpe']:.2f}","__SC__": _cls(s["sharpe"]-1),
+        "__MDD__":       _p(s["max_dd"]),
+        "__TRD__":       str(s["total_trades"]),
+        "__NFC__":       _p(s["nifty_cagr"]),
+        "__ALF__":       _p(s["alpha"]),      "__AC__": _cls(s["alpha"]),
+        "__EQ__":        ej, "__NF__": nj, "__DD__": dj,  # Injected directly as valid JSON arrays
+        "__RANK__":      rankings_html(ls, lr, avail),
+        "__CONTRIB__":   contrib_html(hc, it, s["weeks"]),
+        "__MATRIX__":    matrix_html(lm, lr, avail),
+        "__LOG__":       log_html(log),
     }
     h = HTML
     for k,v in r.items(): h = h.replace(k,v)
