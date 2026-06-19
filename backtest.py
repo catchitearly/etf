@@ -80,7 +80,7 @@ INITIAL     = 1_000_000     # ₹10 lakh
 # Using "2022-06-01" gives ~7 months of buffer before "2023-01-01" → plenty.
 TRADE_START = "2023-01-01"   # ← backtest begins here
 FETCH_START = "2022-06-01"   # ← data fetch begins here (lookback buffer)
-END         = "2025-12-31    #date.today().strftime("%Y-%m-%d")
+END         = "2025-12-31"    #date.today().strftime("%Y-%m-%d")
 
 NIFTY_SYM   = "NIFTYBEES.NS"
 OUT_PATH    = "docs/index.html"
