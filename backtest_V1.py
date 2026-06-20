@@ -45,7 +45,7 @@ ETFS = [
     ("MON100.NS",     "Nasdaq100",     "NSDQ"),
 ]
 
-LOOKBACKS   = [10, 30, 45, 55, 65]   # all periods to test
+LOOKBACKS   = [15, 30, 45, 55, 65]   # all periods to test
 TOP_N       = 3
 COST_PCT    = 0.001
 INITIAL     = 1_000_000
