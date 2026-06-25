@@ -18,32 +18,29 @@ warnings.filterwarnings("ignore")
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 ETFS = [
-    ("GOLDBEES.NS",   "GoldBees",      "GOLD"),
-    ("SILVERBEES.NS", "SilverBees",    "SILV"),
-    ("NIFTYBEES.NS",  "NiftyBees",     "NFTY"),
-    ("JUNIORBEES.NS", "JuniorBees",    "JNBR"),
-    ("MID150BEES.NS", "Midcap150",     "MIDM"),
-    ("NIF100BEES.NS", "Nifty100",      "NF10"),
-    ("BANKBEES.NS",   "BankBees",      "BANK"),
-    ("ITBEES.NS",     "ITBees",        "ITMC"),
-    ("PHARMABEES.NS", "PharmaBees",    "PHRM"),
-    ("AUTOBEES.NS",   "AutoBees",      "AUTO"),
-    ("INFRABEES.NS",  "InfraBees",     "INFR"),
-    ("CONSUMBEES.NS", "ConsumeBees",   "CNSM"),
-    ("PSUBNKBEES.NS", "PSUBankBees",   "PSUB"),
-    ("CPSEETF.NS",    "CPSE ETF",      "CETF"),
-    ("LTGILTBEES.NS", "LT Gilt",       "GSCP"),
-    ("GILT5YBEES.NS", "GSec 5Y",       "GS5Y"),
-    ("LIQUIDBEES.NS", "LiquidBees",    "LIQD"),
-    ("MOM100.NS",     "Momentum100",   "MOM" ),
-    ("MOMENTUM30.NS", "Momentum30",    "MOM3"),
-    ("NV20BEES.NS",   "Value20",       "NV20"),
-    ("DIVOPPBEES.NS", "DivOpp",        "DIVO"),
-    ("HNGSNGBEES.NS", "HangSeng",      "HNGS"),
-    ("MAFANG.NS",     "FANGPlus",      "FANG"),
-    ("MON100.NS",     "Nasdaq100",     "NSDQ"),
+    ("GOLDBEES.NS",   "GoldBees",    "GOLD"),
+    ("SILVERBEES.NS", "SilverBees",  "SILV"),
+    ("NIFTYBEES.NS",  "NiftyBees",   "NFTY"),
+    ("JUNIORBEES.NS", "JuniorBees",  "JNBR"),
+    ("MID150BEES.NS", "Midcap150",   "MIDM"),
+    ("NIF100BEES.NS", "Nifty100",    "NF10"),
+    ("BANKBEES.NS",   "BankBees",    "BANK"),
+    ("ITBEES.NS",     "ITBees",      "ITMC"),
+    ("PHARMABEES.NS", "PharmaBees",  "PHRM"),
+    ("AUTOBEES.NS",   "AutoBees",    "AUTO"),
+    ("INFRABEES.NS",  "InfraBees",   "INFR"),
+    ("CONSUMBEES.NS", "ConsumeBees", "CNSM"),
+    ("PSUBNKBEES.NS", "PSUBankBees", "PSUB"),
+    ("CPSEETF.NS",    "CPSE ETF",    "CETF"),
+    ("LTGILTBEES.NS", "LT Gilt",     "GSCP"),
+    ("LIQUIDBEES.NS", "LiquidBees",  "LIQD"),
+    ("MOM100.NS",     "Momentum100", "MOM" ),
+    ("MOM30.NS",      "Momentum30",  "MOM3"),  # try alternate ticker
+    ("NV20BEES.NS",   "Value20",     "NV20"),
+    ("HNGSNGBEES.NS", "HangSeng",    "HNGS"),
+    ("MAFANG.NS",     "FANGPlus",    "FANG"),
+    ("MON100.NS",     "Nasdaq100",   "NSDQ"),
 ]
-
 
 VIX_SYM      = "^INDIAVIX"
 NIFTY_SYM    = "NIFTYBEES.NS"
@@ -53,8 +50,8 @@ COST_PCT     = 0.001
 INITIAL      = 1_000_000
 
 # 10 years of data
-FETCH_START  = "2016-01-01"
-TRADE_START  = "2016-06-01"   # buffer for longest lookback
+FETCH_START  = "2015-01-01"
+TRADE_START  = "2015-06-01"   # buffer for longest lookback
 END          = date.today().strftime("%Y-%m-%d")
 CACHE_DIR    = ".cache/regime"
 OUT_PATH     = "docs/index.html"
@@ -251,7 +248,10 @@ def vix_to_regime_label(vix_val):
 # ── SINGLE LOOKBACK BACKTEST (for calibration) ────────────────────────────────
 def run_fixed_lb(prices, vix, lb, start, end_date):
     avail = prices.columns.tolist()
-    fridays = pd.date_range(start, end_date, freq="W-FRI")
+    # Start trading only after enough data for lookback
+    data_start_lb  = prices.index[0]
+    start_dt       = max(pd.Timestamp(start), data_start_lb + pd.Timedelta(days=lb*2))
+    fridays        = pd.date_range(start_dt, end_date, freq="W-FRI")
     pairs = []
     for f in fridays:
         si = prices.index.searchsorted(f, side="right") - 1
@@ -287,16 +287,28 @@ def run_fixed_lb(prices, vix, lb, start, end_date):
                         cash += holdings[sym]*px*(1-COST_PCT)
                     cash -= target
                     holdings[sym] = target*(1-COST_PCT)/px
-        port = max(cash + sum(holdings[s]*float(prices[s].iloc[ei]) for s in holdings if s in prices.columns), 0)
+        # Mark-to-market with NaN guard
+        holdings_val = 0.0
+        for s in list(holdings.keys()):
+            if s in prices.columns:
+                px_s = float(prices[s].iloc[ei])
+                if not np.isnan(px_s) and px_s > 0:
+                    holdings_val += holdings[s] * px_s
+                else:
+                    holdings_val += 0.0  # treat NaN price as zero temporarily
+        port = max(cash + holdings_val, 0)
+        if np.isnan(port):
+            port = float(INITIAL)  # reset to initial if something went wrong
         if port > peak: peak = port
         eq.append({"date": str(prices.index[si].date()), "val": port,
                    "dd": (port-peak)/peak*100})
         cur3 = new3
 
-    if len(eq) < 4: return None
+    if len(eq) < 8: return None   # need at least 8 weeks for meaningful stats
     vals = [e["val"] for e in eq]
     wr = [(vals[i]-vals[i-1])/vals[i-1] for i in range(1,len(vals))]
-    cagr = (pow(vals[-1]/INITIAL, 52/len(vals)) - 1)*100 if vals else 0
+    cagr = (pow(max(vals[-1]/INITIAL, 1e-6), 52/max(len(vals),1)) - 1)*100 if vals else 0
+    cagr = max(min(cagr, 500), -99)   # clamp absurd values from short periods
     sharpe = (np.mean(wr)/np.std(wr))*np.sqrt(52) if np.std(wr)>0 else 0
     mdd = min(e["dd"] for e in eq)
     ret = (vals[-1]-INITIAL)/INITIAL*100
@@ -355,7 +367,15 @@ def run_adaptive(prices, vix, regime_lb_map):
     """
     print("\nRunning adaptive backtest...")
     avail = prices.columns.tolist()
-    fridays = pd.date_range(TRADE_START, END, freq="W-FRI")
+
+    # Use the later of TRADE_START or (actual data start + 90 days buffer)
+    data_start     = prices.index[0]
+    trade_start_dt = max(pd.Timestamp(TRADE_START),
+                         data_start + pd.Timedelta(days=90))
+    if trade_start_dt > pd.Timestamp(TRADE_START):
+        print(f"  Adjusted TRADE_START to {trade_start_dt.date()} (data starts {data_start.date()})")
+
+    fridays = pd.date_range(trade_start_dt, END, freq="W-FRI")
     pairs = []
     for f in fridays:
         si = prices.index.searchsorted(f, side="right") - 1
@@ -389,24 +409,66 @@ def run_adaptive(prices, vix, regime_lb_map):
         entering = [s for s in new3  if s not in cur3]
 
         if needs:
+            # Step 1: sell all exiting positions → cash
             for sym in exiting:
-                if sym in holdings and holdings[sym]>0:
-                    px = float(prices[sym].iloc[ei])
-                    cash += holdings[sym]*px*(1-COST_PCT)
-                    total_trades += 1; del holdings[sym]
-            retained = sum(holdings[s]*float(prices[s].iloc[ei]) for s in holdings if s in prices.columns)
-            target = (cash+retained)/TOP_N
-            for sym in new3:
-                px = float(prices[sym].iloc[ei])
-                cval = holdings.get(sym,0)*px
-                if sym in entering or abs(cval-target)>target*0.05:
-                    if sym in holdings and holdings[sym]>0:
-                        cash += holdings[sym]*px*(1-COST_PCT); total_trades += 1
-                    cash -= target
-                    holdings[sym] = target*(1-COST_PCT)/px
+                if sym in holdings and holdings[sym] > 0:
+                    px    = float(prices[sym].iloc[ei])
+                    cash += holdings[sym] * px * (1 - COST_PCT)
                     total_trades += 1
+                    del holdings[sym]
 
-        port = max(cash + sum(holdings[s]*float(prices[s].iloc[ei]) for s in holdings if s in prices.columns), 0)
+            # Step 2: value retained positions at execution price
+            retained = sum(
+                holdings[s] * float(prices[s].iloc[ei])
+                for s in holdings if s in prices.columns
+                and not np.isnan(float(prices[s].iloc[ei]))
+            )
+
+            # Step 3: target per slot based on TOTAL capital (cash + retained)
+            total_capital = cash + retained
+            target = total_capital / TOP_N
+
+            # Step 4: rebalance each new_top3 slot
+            for sym in new3:
+                if sym not in prices.columns:
+                    continue
+                px   = float(prices[sym].iloc[ei])
+                if np.isnan(px) or px <= 0:
+                    continue
+                cval = holdings.get(sym, 0) * px
+                needs_trade = sym in entering or abs(cval - target) > target * 0.05
+
+                if needs_trade:
+                    # Sell existing lot first (if any) → cash
+                    if sym in holdings and holdings[sym] > 0:
+                        cash += holdings[sym] * px * (1 - COST_PCT)
+                        total_trades += 1
+                        holdings[sym] = 0
+
+                    # Buy: deduct cash, record shares
+                    if cash >= target * 0.99:   # safety check
+                        cash         -= target
+                        holdings[sym] = (target * (1 - COST_PCT)) / px
+                        total_trades += 1
+                    else:
+                        # Cash shortfall — buy with whatever cash is available
+                        available = max(cash, 0)
+                        holdings[sym] = (available * (1 - COST_PCT)) / px
+                        cash = 0
+                        total_trades += 1
+
+        # Mark-to-market with NaN guard
+        holdings_val = 0.0
+        for s in list(holdings.keys()):
+            if s in prices.columns:
+                px_s = float(prices[s].iloc[ei])
+                if not np.isnan(px_s) and px_s > 0:
+                    holdings_val += holdings[s] * px_s
+                else:
+                    holdings_val += 0.0  # treat NaN price as zero temporarily
+        port = max(cash + holdings_val, 0)
+        if np.isnan(port):
+            port = float(INITIAL)  # reset to initial if something went wrong
         for sym in new3: hold_count[sym] = hold_count.get(sym,0)+1
         nifty_px = float(prices[NIFTY_SYM].iloc[ei]) if NIFTY_SYM in prices.columns else None
         nifty_v  = (nifty_px/nifty_px0*INITIAL) if nifty_px and nifty_px0 else INITIAL
@@ -479,10 +541,29 @@ def get_current_signal(prices, vix, log):
 
 # ── BUILD HTML ────────────────────────────────────────────────────────────────
 def build_html(prices, vix, yearly, adaptive, stats, signal):
-    with open("/home/claude/node_modules/chart.js/dist/chart.umd.js") as f:
-        chartjs = f.read()
-    with open("/home/claude/node_modules/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.js") as f:
-        adapter = f.read()
+    # Locate node_modules relative to this script (works locally AND on GitHub Actions)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        script_dir,                          # same dir as script
+        os.getcwd(),                         # working directory
+        os.path.expanduser("~"),             # home dir
+    ]
+    chartjs = adapter = None
+    for base in candidates:
+        cj_path = os.path.join(base, "node_modules", "chart.js", "dist", "chart.umd.js")
+        ad_path = os.path.join(base, "node_modules", "chartjs-adapter-date-fns",
+                               "dist", "chartjs-adapter-date-fns.bundle.js")
+        if os.path.exists(cj_path) and os.path.exists(ad_path):
+            with open(cj_path) as f: chartjs = f.read()
+            with open(ad_path) as f: adapter = f.read()
+            print(f"  Chart.js loaded from: {base}/node_modules")
+            break
+    if chartjs is None:
+        # Fallback: CDN links (requires internet on viewer's browser)
+        print("  WARNING: node_modules not found — using CDN links (requires browser internet)")
+        chartjs = ""
+        adapter = ""
+        # Will be handled below with CDN script tags
 
     def p(v,d=1): return f"{'+' if v>0 else ''}{v:.{d}f}%"
     def inr(v):   return f"Rs {v/1e5:.2f}L"
@@ -642,6 +723,14 @@ def build_html(prices, vix, yearly, adaptive, stats, signal):
 
     gc = '#2e3250'
 
+    # Build script tags — inline if available, CDN fallback if not
+    if chartjs and adapter:
+        chartjs_tag = f"<script>{chartjs}</script>"
+        adapter_tag = f"<script>{adapter}</script>"
+    else:
+        chartjs_tag = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>'
+        adapter_tag = '<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>'
+
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"/>
@@ -769,8 +858,8 @@ tr:last-child td{{border-bottom:none}}
 <div class="upd">GitHub Actions · yfinance · Regime-Adaptive RS · Signal: Fri close → Execute: Mon close</div>
 </div>
 
-<script>{chartjs}</script>
-<script>{adapter}</script>
+{chartjs_tag}
+{adapter_tag}
 <script>
 var gc = '{gc}';
 var eqD = {eq_json};
