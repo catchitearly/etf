@@ -53,33 +53,28 @@ def get_regime_info(vix_val):
 def run_strategy(prices, vix, fixed_lookback=None):
     """
     Simulates a momentum rotation strategy across the ETF universe.
-    - If fixed_lookback is provided, it uses that exact window throughout.
-    - If None, it dynamically updates lookbacks on Friday based on India VIX.
     """
-    # 1. Resample to standard strategy execution weeks
-    weekly_signals = prices.resample('W-FRI').last()
+    # Resample down to standard strategy execution weeks
+    weekly_signals = prices.resample('W-FRI').last().dropna(how='all')
     
-    # Pre-calculate asset lookback changes
+    # Pre-calculate asset lookback changes safely across the daily index
     returns_cache = {lb: prices.pct_change(lb) for lb in LOOKBACKS}
     
-    # Working data structures
     date_index = prices.index
     eq_curve = pd.Series(index=date_index, dtype=float)
     eq_curve.iloc[0] = INITIAL_CAPITAL
     
     current_capital = INITIAL_CAPITAL
-    active_shares = {}     # {ticker: shares_held}
-    active_tickers = []    # list of active tokens
+    active_shares = {}     
+    active_tickers = []    
     
     log_book = []
     avail_universe = [e[0] for e in ETFS]
     
-    # Performance helper values
     last_scores_map = {}
     last_rets_map = {}
 
     for idx, (signal_date, signal_row) in enumerate(weekly_signals.iterrows()):
-        # Filter down to operational tickers that have traded historical data
         avail = [col for col in avail_universe if col in prices.columns and not pd.isna(signal_row[col])]
         if not avail:
             continue
@@ -88,42 +83,47 @@ def run_strategy(prices, vix, fixed_lookback=None):
         if fixed_lookback:
             current_lb = fixed_lookback
             regime_label = f"Fixed {fixed_lookback}d"
-            cur_vix = vix.loc[:signal_date].iloc[-1] if not vix.empty and signal_date in vix.index else None
+            # Extract last known VIX safely without exact key dependency
+            vix_slice = vix.loc[:signal_date]
+            cur_vix = vix_slice.iloc[-1] if not vix_slice.empty else 16.0
         else:
-            cur_vix = vix.loc[:signal_date].iloc[-1] if not vix.empty else 16.0
+            vix_slice = vix.loc[:signal_date]
+            cur_vix = vix_slice.iloc[-1] if not vix_slice.empty else 16.0
             regime_label, current_lb = get_regime_info(cur_vix)
             
-        # Extract respective momentum scores
+        # Safely find the closest available daily row data point up to or equal to signal_date
         lb_returns = returns_cache[current_lb]
-        scores = lb_returns.loc[signal_date, avail].dropna()
+        closest_idx = lb_returns.index.asof(signal_date)
         
-        # Determine top execution slice
+        if pd.isna(closest_idx):
+            continue
+            
+        scores = lb_returns.loc[closest_idx, avail].dropna()
+        if scores.empty:
+            continue
+            
         top_targets = scores.nlargest(TOP_N).index.tolist()
         
-        # Capture scores and returns to display in current UI rankings panel
+        # Save current state for UI data frames
         if idx == len(weekly_signals) - 1:
             last_scores_map = scores.to_dict()
-            last_rets_map = prices.pct_change(5).loc[signal_date, avail].dropna().to_dict() # 1-week return placeholder
+            # 5-day absolute window return snapshot
+            last_rets_map = prices.pct_change(5).loc[prices.index.asof(signal_date), avail].dropna().to_dict()
             
-        # Calculate execution date window (Next business day closing price / Monday close mapping)
+        # Calculate execution date window (Next available closing price session)
         try:
-            pos = date_index.get_loc(signal_date)
-            exec_date = date_index[pos + 1] if pos + 1 < len(date_index) else signal_date
+            pos = date_index.get_loc(closest_idx)
+            exec_date = date_index[pos + 1] if pos + 1 < len(date_index) else closest_idx
         except:
-            exec_date = signal_date
+            exec_date = closest_idx
             
-        # Calculate intermediate valuation updates up to the next rotation window
-        # For simplicity, performance is evaluated at execution boundaries:
         if active_shares:
-            # Re-value current state matching incoming pricing arrays
             current_capital = sum(active_shares[sym] * prices.loc[exec_date, sym] for sym in active_tickers)
         
-        # Calculate execution allocations across our portfolio targets
         entering = [s for s in top_targets if s not in active_tickers]
         exiting  = [s for s in active_tickers if s not in top_targets]
         changed  = len(entering) > 0
         
-        # Execute orders at target Close Price parameters
         active_shares = {}
         active_tickers = top_targets.copy()
         allocation_block = current_capital / max(len(top_targets), 1)
@@ -144,22 +144,16 @@ def run_strategy(prices, vix, fixed_lookback=None):
             "capital": round(current_capital, 2)
         })
         
-        # Sync linear progression blocks across equity tracking arrays
-        eq_curve.loc[signal_date:exec_date] = current_capital
+        eq_curve.loc[closest_idx:exec_date] = current_capital
 
     eq_curve = eq_curve.ffill().fillna(INITIAL_CAPITAL)
     return eq_curve, log_book, last_scores_map, last_rets_map
 
 # ── CALIBRATION ENGINE ────────────────────────────────────────────────────────
 def calibrate_yearly_with_benchmarks(prices, vix):
-    """
-    Calculates detailed calendar year performance returns and CAGRs 
-    for each fixed lookback period parameter.
-    """
     years = sorted(prices.index.year.unique())
     yearly_calib = {}
     
-    # Pre-simulate all baseline tracking runs across structural timelines
     static_runs = {lb: run_strategy(prices, vix, fixed_lookback=lb)[0] for lb in LOOKBACKS}
     
     for yr in years:
@@ -167,7 +161,6 @@ def calibrate_yearly_with_benchmarks(prices, vix):
         avg_vx = round(float(vix_slice.mean()), 1) if not vix_slice.empty else None
         max_vx = round(float(vix_slice.max()), 1) if not vix_slice.empty else None
         
-        # Track baseline benchmark mapping label
         repr_vix = avg_vx if avg_vx else 16.0
         label, _ = get_regime_info(repr_vix)
         
@@ -186,17 +179,14 @@ def calibrate_yearly_with_benchmarks(prices, vix):
             eq_yr = eq[eq.index.year == yr]
             if len(eq_yr) < 2: continue
             
-            # Absolute Yearly Return computation profile
             y_ret = ((eq_yr.iloc[-1] / eq_yr.iloc[0]) - 1) * 100
             
-            # Risk/Reward metric modeling (Sharpe Profiling parameters)
             daily_pct = eq_yr.pct_change().dropna()
             std_dev = daily_pct.std()
             ann_vol = std_dev * np.sqrt(252) if std_dev > 0 else 0
             ann_ret = daily_pct.mean() * 252
             sharpe = (ann_ret / ann_vol) if ann_vol > 0 else 0.0
             
-            # Standard structural conversion matrix (Yearly Return = CAGR across 1 Year window bounds)
             yearly_calib[yr]["lb_stats"][lb] = {
                 "sharpe": round(sharpe, 2),
                 "return": round(y_ret, 2),
@@ -214,26 +204,19 @@ def calibrate_yearly_with_benchmarks(prices, vix):
 # ── PERFORMANCE ANALYTICS MATRICES ────────────────────────────────────────────
 def calc_stats(eq, benchmark_prices, log_book):
     if eq.empty: return {}
-    
-    # Match benchmark indexes cleanly
     bench = benchmark_prices.reindex(eq.index).ffill().bfill()
     
     total_ret = ((eq.iloc[-1] / eq.iloc[0]) - 1) * 100
-    bench_ret = ((bench.iloc[-1] / bench.iloc[0]) - 1) * 100
-    
     days = (eq.index[-1] - eq.index[0]).days
     cagr = (((eq.iloc[-1] / eq.iloc[0]) ** (365.0 / max(days, 1))) - 1) * 100
     b_cagr = (((bench.iloc[-1] / bench.iloc[0]) ** (365.0 / max(days, 1))) - 1) * 100
     
-    # Drawdown profile loop
     cum_max = eq.cummax()
     dd_series = ((eq - cum_max) / cum_max) * 100
     mdd = dd_series.min()
     
-    # Shape ratio evaluation profile
     daily_pct = eq.pct_change().dropna()
     sharpe = (daily_pct.mean() / daily_pct.std() * np.sqrt(252)) if daily_pct.std() > 0 else 0
-    
     trades_count = sum(1 for lg in log_book if lg["changed"])
     
     return {
@@ -265,7 +248,6 @@ def make_mock_data():
     prices_df = pd.DataFrame(prices_dict, index=trade_dates)
     vix_vals = np.random.normal(16, 2.5, len(trade_dates))
     
-    # Model cyclical black swan events
     for yr, bump in [(2016, 8), (2020, 28), (2022, 12)]:
         mask = trade_dates.year == yr
         vix_vals[mask] += np.random.uniform(2, bump, mask.sum())
@@ -283,7 +265,6 @@ def build_html(prices, vix, yearly, adaptive_eq, stats, log_book, last_scores, l
     def inr(v): return f"Rs {v/1e5:.2f}L"
     def cls(v): return "green" if v>=0 else "red"
 
-    # Assemble Last Week's Edge Execution Context (Signal Block Card)
     latest_log = log_book[-1] if log_book else None
     if latest_log:
         vix_val = latest_log["vix"] or 15.0
@@ -331,7 +312,6 @@ def build_html(prices, vix, yearly, adaptive_eq, stats, log_book, last_scores, l
     else:
         sig_html = ""
 
-    # Assemble VIX Regime Selection Rule Set Mapping Table
     regime_html = """<table><thead><tr><th>VIX Thresholds</th><th>Regime Label</th><th>Assigned Lookback</th><th>Rationale</th></tr></thead><tbody>"""
     for lo, hi, label, lb in VIX_REGIMES:
         hi_str = str(hi) if hi < 999 else "+"
@@ -341,7 +321,6 @@ def build_html(prices, vix, yearly, adaptive_eq, stats, log_book, last_scores, l
         regime_html += f"""<tr style="{bg}"><td><b>{lo} – {hi_str}</b></td><td>{label}{tag}</td><td style="color:var(--accent);font-weight:700">{lb}d</td><td style="color:var(--muted)">Rotation alpha matching asset pricing noise bounds.</td></tr>"""
     regime_html += "</tbody></table>"
 
-    # Assemble Calibration View containing accurate backtest profiles
     yr_html = """<table><thead><tr>
       <th>Year</th><th>Avg VIX</th><th>Max VIX</th><th>Regime</th><th>Best LB</th>
       <th>15d</th><th>30d</th><th>45d</th><th>55d</th><th>65d</th>
@@ -360,7 +339,6 @@ def build_html(prices, vix, yearly, adaptive_eq, stats, log_book, last_scores, l
         yr_html += row
     yr_html += "</tbody></table>"
 
-    # Assemble Log Row Streamers
     log_html = ""
     for lg in reversed(log_book):
         p_tags = "".join(f'<span class="tg">{em[s][2] if s in em else s}</span>' for s in lg["top3"])
@@ -381,7 +359,6 @@ def build_html(prices, vix, yearly, adaptive_eq, stats, log_book, last_scores, l
           </div>
         </div>"""
 
-    # Format line chart objects cleanly for browser render pass
     eq_json = json.dumps([{"x": str(d.date()), "y": round(float(v), 2)} for d, v in adaptive_eq.items()])
     nf_json = json.dumps([{"x": str(d.date()), "y": round(float(prices["NIFTYBEES.NS"].loc[d]), 2) * (INITIAL_CAPITAL/prices["NIFTYBEES.NS"].iloc[0])} for d in adaptive_eq.index])
     dd_json = json.dumps([{"x": str(d.date()), "y": round(float(v), 2)} for d, v in stats["dd_series"].items()])
@@ -538,7 +515,6 @@ function sw(t,el){{
 
 # ── PIPELINE ENTRY POINT ──────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Generate mock vectors directly to run standalone execution safely
     prices, vix = make_mock_data()
     
     # 1. Run per-year calibration benchmark evaluations
