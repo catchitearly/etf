@@ -87,7 +87,7 @@ def _fetch_one(sym, retries=4):
             df = yf.download(sym, start=FETCH_START, end=END,
                              progress=False, timeout=30, auto_adjust=True)
             if df is None or df.empty:
-                raise ValueError("empty")
+                raise ValueError("empty — Yahoo Finance may be blocked on this network")
             if isinstance(df.columns, pd.MultiIndex):
                 col = "Close"
                 s = df[col][sym].copy() if sym in df[col].columns else df[col].iloc[:,0].copy()
@@ -103,18 +103,71 @@ def _fetch_one(sym, retries=4):
             time.sleep(3*attempt + random.uniform(0,2))
     return None
 
+def _fetch_vix_nse_fallback():
+    """
+    Fallback: fetch India VIX from NSE website directly.
+    NSE provides historical VIX as a downloadable CSV.
+    """
+    try:
+        import requests
+        url = ("https://www.nseindia.com/api/historical/vixhistory"
+               "?from=01-01-2015&to=" + datetime.now().strftime("%d-%m-%Y"))
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.nseindia.com/",
+        }
+        # Need a session with cookies first
+        sess = requests.Session()
+        sess.get("https://www.nseindia.com", headers=headers, timeout=10)
+        resp = sess.get(url, headers=headers, timeout=15)
+        data = resp.json()
+        records = data.get("data", [])
+        if not records:
+            return None
+        df = pd.DataFrame(records)
+        df["Date"] = pd.to_datetime(df["EOD_TIMESTAMP"], dayfirst=True)
+        df = df.set_index("Date").sort_index()
+        s = df["EOD_VIX_CLOSE"].astype(float)
+        s.name = VIX_SYM
+        print(f"  NSE fallback OK: {len(s)} VIX rows")
+        return s
+    except Exception as e:
+        print(f"  NSE fallback failed: {e}")
+        return None
+
+def _make_synthetic_vix(prices):
+    """
+    Last resort: estimate VIX proxy from Nifty realised volatility.
+    Uses 20-day rolling std of Nifty returns * sqrt(252) * 100.
+    Not as good as real VIX but preserves regime logic.
+    """
+    if NIFTY_SYM not in prices.columns:
+        return None
+    nifty = prices[NIFTY_SYM].dropna()
+    log_ret = np.log(nifty / nifty.shift(1))
+    rvol = log_ret.rolling(20).std() * np.sqrt(252) * 100
+    rvol.name = VIX_SYM
+    rvol = rvol.reindex(prices.index).ffill(limit=5)
+    print(f"  Synthetic VIX (realised vol proxy): mean={rvol.mean():.1f}, range={rvol.min():.1f}-{rvol.max():.1f}")
+    return rvol
+
 def fetch_all():
     print(f"Fetching {len(ETFS)+1} instruments | {FETCH_START} -> {END}")
     series = {}
 
-    # Fetch VIX first
+    # Fetch VIX — try Yahoo, then NSE fallback, then synthetic
     print(f"  [ 0/{len(ETFS)}] India VIX ({VIX_SYM})", end=" ... ", flush=True)
     v = _fetch_one(VIX_SYM)
     if v is not None:
         series[VIX_SYM] = v
         print(f"ok ({v.notna().sum()} rows, {v.index[0].date()} to {v.index[-1].date()})")
     else:
-        print("FAILED — regime detection disabled")
+        print("Yahoo blocked — trying NSE direct...")
+        v = _fetch_vix_nse_fallback()
+        if v is not None:
+            series[VIX_SYM] = v
+        # synthetic VIX added after prices are loaded (needs Nifty prices)
     time.sleep(1.5)
 
     for i,(sym,name,short) in enumerate(ETFS,1):
@@ -138,7 +191,20 @@ def fetch_all():
     prices = prices[valid].dropna(how="all")
 
     vix = series.get(VIX_SYM, pd.Series(dtype=float))
-    vix = vix.reindex(prices.index).ffill(limit=5)
+    
+    # If VIX completely missing, build synthetic from Nifty realised vol
+    if vix.notna().sum() < 100:
+        print("  VIX unavailable — building synthetic realised-vol proxy from NiftyBees")
+        vix_synth = _make_synthetic_vix(prices)
+        if vix_synth is not None:
+            vix = vix_synth
+            print("  ⚠  Using synthetic VIX (realised vol). Regime accuracy reduced.")
+        else:
+            # Flat fallback: use constant VIX=17 (Normal regime → 30d lookback)
+            vix = pd.Series(17.0, index=prices.index, name=VIX_SYM)
+            print("  ⚠  Using flat VIX=17 (Normal regime). No regime adaptation.")
+    else:
+        vix = vix.reindex(prices.index).ffill(limit=5)
 
     print(f"\n  ETFs: {len(valid)} | VIX rows: {vix.notna().sum()}")
     print(f"  Price range: {prices.index[0].date()} -> {prices.index[-1].date()}\n")
@@ -776,11 +842,43 @@ function sw(t,el){{
 </script>
 </body></html>"""
 
+# ── MOCK DATA (for testing without internet) ──────────────────────────────────
+def make_mock_data():
+    """Generates realistic mock ETF + VIX data for testing the full pipeline."""
+    print("MOCK MODE: generating synthetic data (no network calls)")
+    trade_dates = pd.date_range(FETCH_START, END, freq="B")
+    np.random.seed(42)
+    mock_etfs = [e[0] for e in ETFS[:12]]  # use first 12
+    prices_dict = {}
+    for sym in mock_etfs:
+        drift = np.random.uniform(0.00008, 0.00035)
+        vol   = np.random.uniform(0.010, 0.020)
+        start = np.random.uniform(30, 300)
+        lr    = np.random.normal(drift, vol, len(trade_dates))
+        prices_dict[sym] = start * np.exp(np.cumsum(lr))
+    prices = pd.DataFrame(prices_dict, index=trade_dates)
+    # Mock VIX: mean-reverting ~16, with crisis spikes
+    vix_vals = np.random.normal(16, 3, len(trade_dates))
+    for yr, spike in [(2020, 30), (2022, 22), (2016, 18)]:
+        mask = trade_dates.year == yr
+        vix_vals[mask] += np.random.uniform(0, spike-14, mask.sum())
+    vix = pd.Series(np.clip(vix_vals, 9, 65), index=trade_dates, name=VIX_SYM)
+    print(f"  Mock: {len(prices)} days, {len(mock_etfs)} ETFs, VIX {vix.min():.0f}-{vix.max():.0f}")
+    return prices, vix
+
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    prices, vix = fetch_all()
+    # Use --mock flag to test without network: python regime_backtest.py --mock
+    USE_MOCK = "--mock" in sys.argv
+
+    if USE_MOCK:
+        prices, vix = make_mock_data()
+    else:
+        prices, vix = fetch_all()
     if prices.empty:
-        print("ERROR: No data", file=sys.stderr); sys.exit(1)
+        print("ERROR: No data.", file=sys.stderr)
+        print("If Yahoo Finance is blocked on your network, try: python regime_backtest.py --mock")
+        sys.exit(1)
 
     # Step 1: per-year calibration
     yearly = calibrate_yearly(prices, vix)
