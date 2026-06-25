@@ -50,8 +50,8 @@ COST_PCT     = 0.001
 INITIAL      = 1_000_000
 
 # 10 years of data
-FETCH_START  = "2015-01-01"
-TRADE_START  = "2015-06-01"   # buffer for longest lookback
+FETCH_START  = "2016-01-01"
+TRADE_START  = "2016-06-01"   # buffer for longest lookback
 END          = date.today().strftime("%Y-%m-%d")
 CACHE_DIR    = ".cache/regime"
 OUT_PATH     = "docs/index.html"
