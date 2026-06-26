@@ -4,7 +4,7 @@ Regime-Adaptive RS Backtester — v2
 Key changes from v1:
   1. CORRECTED VIX→lookback mapping (empirically tuned per per-year analysis)
   2. SPLIT PERIODS: Backtest 2015-01-01 → 2024-12-31  |  Forward 2025-01-01 → today
-  3. DD circuit breaker: if rolling 20-week DD < -15%, go to cash (LIQUIDBEES)
+  3. Full-period fixed-LB comparison: run each of 15/30/45/55/65d over 2015→today
   4. Separate equity curves, stats, and tables for each period
   5. Per-year calibration covers 2015-2024 only (honest — no future leakage)
 """
@@ -35,7 +35,7 @@ ETFS = [
     ("CPSEETF.NS",    "CPSE ETF",      "CETF"),
     ("LTGILTBEES.NS", "LT Gilt",       "GSCP"),
     ("GILT5YBEES.NS", "GSec 5Y",       "GS5Y"),
-    ("LIQUIDBEES.NS", "LiquidBees",    "LIQD"),   # ← cash proxy for circuit breaker
+    ("LIQUIDBEES.NS", "LiquidBees",    "LIQD"),
     ("MOM100.NS",     "Momentum100",   "MOM" ),
     ("MOMENTUM30.NS", "Momentum30",    "MOM3"),
     ("NV20BEES.NS",   "Value20",       "NV20"),
@@ -47,14 +47,12 @@ ETFS = [
 
 VIX_SYM   = "^INDIAVIX"
 NIFTY_SYM = "NIFTYBEES.NS"
-CASH_SYM  = "LIQUIDBEES.NS"   # circuit breaker safe-haven
-
 LOOKBACKS = [15, 30, 45, 55, 65]
 TOP_N     = 3
 COST_PCT  = 0.001
 INITIAL   = 1_000_000
 
-FETCH_START  = "2020-01-01"
+FETCH_START  = "2015-01-01"
 BT_END       = "2024-12-31"   # backtest period end
 FT_START     = "2025-01-01"   # forward test start
 END          = date.today().strftime("%Y-%m-%d")
@@ -83,8 +81,6 @@ VIX_REGIMES = [
     (28, 999,  "Crisis / High Vol", 45),
 ]
 
-# DD Circuit Breaker: if trailing 20-week DD drops below this → go to LIQUIDBEES
-DD_CIRCUIT_BREAKER = -15.0   # percent
 
 # ── FETCH ─────────────────────────────────────────────────────────────────────
 def _cache_path(sym):
@@ -379,13 +375,13 @@ def calibrate_yearly(prices, vix, cal_start="2015-01-01", cal_end="2024-12-31"):
 
 # ── ADAPTIVE BACKTEST ENGINE ───────────────────────────────────────────────────
 def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
-                 initial_capital=None, use_circuit_breaker=True):
+                 initial_capital=None):
     """
     Run the adaptive RS strategy for a given period.
     Returns full equity curve, log, and stats dict.
     """
     print(f"\nRunning adaptive [{label}]: {period_start} → {period_end} ...")
-    avail = [c for c in prices.columns if c != CASH_SYM]  # exclude cash from RS ranking
+    avail = prices.columns.tolist()
 
     data_start = prices.index[0]
     start_dt   = max(pd.Timestamp(period_start),
@@ -409,7 +405,6 @@ def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
     cur3  = []
     peak  = cap
     total_trades  = 0
-    in_circuit    = False   # circuit breaker active flag
     hold_count    = {e[0]: 0 for e in ETFS}
 
     eq=[]; nf=[]; dd_curve=[]; log=[]
@@ -426,39 +421,12 @@ def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
         lb     = vix_to_lookback(vix_val)
         regime = vix_to_regime_label(vix_val)
 
-        # ── DD Circuit Breaker check ──────────────────────────────────────
-        holdings_val_now = sum(
-            holdings[s]*float(prices[s].iloc[si])
-            for s in holdings if s in prices.columns
-            and not np.isnan(float(prices[s].iloc[si])) and prices[s].iloc[si] > 0
-        )
-        port_now = cash + holdings_val_now
-        dd_now   = (port_now - peak) / peak * 100 if peak > 0 else 0
-
-        circuit_trigger = use_circuit_breaker and dd_now < DD_CIRCUIT_BREAKER
-        circuit_recover = use_circuit_breaker and in_circuit and dd_now > DD_CIRCUIT_BREAKER * 0.5
-
-        if circuit_trigger and not in_circuit:
-            in_circuit = True
-            print(f"  ⚡ Circuit breaker triggered {date_str}: DD={dd_now:.1f}% → going to cash")
-
-        if circuit_recover:
-            in_circuit = False
-            print(f"  ✅ Circuit breaker OFF {date_str}: DD={dd_now:.1f}% recovered")
-
         # ── Decide target positions ───────────────────────────────────────
-        if in_circuit:
-            # Park in LIQUIDBEES (cash proxy)
-            new3 = [CASH_SYM] if CASH_SYM in prices.columns else []
-            scores = {}; rets = {}
-            if not new3:
-                new3 = cur3   # fallback: hold current if no cash proxy
-        else:
-            scores, rets = compute_rs(prices, si, avail, lb)
-            ranked = sorted([(s,v) for s,v in scores.items() if v is not None],
-                            key=lambda x:-x[1])
-            new3 = [s for s,_ in ranked[:TOP_N]]
-            last_scores = scores; last_rets = rets
+        scores, rets = compute_rs(prices, si, avail, lb)
+        ranked = sorted([(s,v) for s,v in scores.items() if v is not None],
+                        key=lambda x:-x[1])
+        new3 = [s for s,_ in ranked[:TOP_N]]
+        last_scores = scores; last_rets = rets
 
         if len(new3) < 1: continue
 
@@ -529,7 +497,6 @@ def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
             "changed": needs and wi>0, "capital": round(port,2),
             "vix":     round(vix_val,1) if vix_val else None,
             "regime":  regime, "lb": lb,
-            "in_circuit": in_circuit,
             "scores": {s:round(v,6) if v else None for s,v in scores.items()},
             "rets":   {s:round(v,6) if v else None for s,v in rets.items()}
         })
@@ -586,11 +553,10 @@ def get_current_signal(prices, vix, ft_result):
         cur_regime=cur_reg, cur_lb=cur_lb,
         cur_prices=cur_prices,
         portfolio_val=last["capital"],
-        in_circuit=last.get("in_circuit", False),
     )
 
 # ── BUILD HTML ────────────────────────────────────────────────────────────────
-def build_html(prices, vix, yearly, bt_result, ft_result, bt_stats, ft_stats, signal):
+def build_html(prices, vix, yearly, fullperiod_lbs, bt_result, ft_result, bt_stats, ft_stats, signal):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [script_dir, os.getcwd(), os.path.expanduser("~")]
     chartjs = adapter = None
@@ -610,17 +576,42 @@ def build_html(prices, vix, yearly, bt_result, ft_result, bt_stats, ft_stats, si
     em    = {e[0]:e for e in ETFS}
     upd   = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
+    # ── Full-period stat cards ─────────────────────────────────────────────
+    lb_labels = {15:"15d",30:"30d",45:"45d",55:"55d",65:"65d"}
+    fp_stat_cards = ""
+    fp_eq_datasets = []
+    for lb in LOOKBACKS:
+        r = fullperiod_lbs.get(lb)
+        if not r: continue
+        cagr_c = "#22c55e" if r["cagr_full"]>=0 else "#ef4444"
+        mdd_c  = "#ef4444"
+        fp_stat_cards += f"""
+    <div class="sc" style="border-top:3px solid {r['color']}">
+      <div class="lb">{lb}d Fixed Lookback</div>
+      <div class="vl" style="color:{r['color']}">{r['cagr_full']:+.1f}%</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:4px">CAGR (full period)</div>
+      <div style="font-size:.78rem;margin-top:4px">Sharpe <b style="color:{'#22c55e' if r['sharpe']>=1 else '#f59e0b'}">{r['sharpe']:.2f}</b></div>
+      <div style="font-size:.78rem">MDD <b style="color:{mdd_c}">{r['mdd']:+.1f}%</b></div>
+      <div style="font-size:.78rem">Final <b>{inr(r['final'])}</b></div>
+    </div>"""
+        eq_pts = [{"x": e["date"], "y": e["val"]} for e in r["eq"]]
+        fp_eq_datasets.append({
+            "label": f"{lb}d",
+            "data":  eq_pts,
+            "borderColor": r["color"],
+            "backgroundColor": "transparent",
+            "borderWidth": 2,
+            "pointRadius": 0,
+            "tension": 0.3,
+        })
+
     # ── Signal card ───────────────────────────────────────────────────────
     if signal:
         vix_col = ("#22c55e" if (signal["cur_vix"] or 0)<15 else
                    "#f59e0b" if (signal["cur_vix"] or 0)<22 else "#ef4444")
-        circuit_warn = ""
-        if signal.get("in_circuit"):
-            circuit_warn = '<div style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:10px 14px;margin-bottom:14px;color:#ef4444;font-weight:600;">⚡ DD CIRCUIT BREAKER ACTIVE — Portfolio in LIQUIDBEES (cash). Awaiting 50% DD recovery.</div>'
         sig_html = f"""
 <div class="cc signal-card">
   <div class="st">THIS WEEK'S BUY SIGNAL — FORWARD TEST</div>
-  {circuit_warn}
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px">
     <div class="mini-stat"><div class="mini-label">India VIX</div>
       <div class="mini-val" style="color:{vix_col}">{signal['cur_vix'] or 'N/A'}</div></div>
@@ -776,7 +767,7 @@ def build_html(prices, vix, yearly, bt_result, ft_result, bt_stats, ft_stats, si
         out = ""
         for lg in reversed(log_entries[-200:]):   # last 200 for perf
             tags = "".join(
-                f'<span class="tg {"tg-cash" if s==CASH_SYM else ""}">{em.get(s,(s,s,s))[2]}</span>'
+                f'<span class="tg">{em.get(s,(s,s,s))[2]}</span>'
                 for s in lg["top3"]
             )
             chg = ""
@@ -786,9 +777,8 @@ def build_html(prices, vix, yearly, bt_result, ft_result, bt_stats, ft_stats, si
                 chg = f'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">{ex} {en}</div>'
             nc  = "" if lg["changed"] else '<span style="color:var(--muted);font-size:.72rem;margin-left:5px">no change</span>'
             vx  = f'VIX {lg["vix"]}' if lg["vix"] else ""
-            cb  = ' <span class="bd br">⚡CB</span>' if lg.get("in_circuit") else ""
             out += (f'<div class="lr" data-c="{"1" if lg["changed"] else "0"}">'
-                    f'<div class="ld">{lg["date"]}<span style="display:block;font-size:.65rem;color:var(--muted)">{lg["lb"]}d · {vx}{cb}</span></div>'
+                    f'<div class="ld">{lg["date"]}<span style="display:block;font-size:.65rem;color:var(--muted)">{lg["lb"]}d · {vx}</span></div>'
                     f'<div class="lb2"><div style="display:flex;align-items:center;flex-wrap:wrap">{tags}{nc}</div>'
                     f'{chg}<div style="color:var(--muted);font-size:.72rem;margin-top:2px">Rs {lg["capital"]/1000:.1f}K · {lg["regime"]}</div>'
                     f'</div></div>\n')
@@ -867,7 +857,6 @@ tr:last-child td{{border-bottom:none}}
 .st::before{{content:'';display:block;width:4px;height:17px;background:var(--accent);border-radius:2px}}
 .mw{{overflow-x:auto}}
 .tg{{display:inline-flex;background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:5px;padding:2px 8px;font-size:.77rem;font-weight:600;margin:2px}}
-.tg-cash{{background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.3);color:#f59e0b}}
 .tabs{{display:flex;gap:4px;background:var(--card2);padding:4px;border-radius:8px;width:fit-content;margin-bottom:14px}}
 .tab{{padding:5px 15px;border-radius:6px;cursor:pointer;font-size:.82rem;font-weight:500;color:var(--muted);border:none;background:none}}
 .tab.active{{background:var(--accent);color:#fff}}
@@ -900,6 +889,17 @@ tr:last-child td{{border-bottom:none}}
 <div class="container">
 
 {sig_html}
+
+<hr class="divider">
+<div class="period-label">▶ FULL PERIOD FIXED-LB COMPARISON — {FETCH_START} to {END} (All lookbacks, same capital)</div>
+<div class="cc">
+  <div class="st">Fixed Lookback CAGR Comparison — 2015 to {END}</div>
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px">
+    {fp_stat_cards}
+  </div>
+  <div class="chartbox" style="height:280px"><canvas id="ec-fp"></canvas></div>
+  <div style="font-size:.72rem;color:var(--muted);margin-top:8px">Each lookback runs independently with Rs 10L start · No regime switching · Full span 2015→{END}</div>
+</div>
 
 <hr class="divider">
 <div class="period-label">▶ BACKTEST PERIOD — 2015 to 2024 (Calibration / In-sample)</div>
@@ -967,7 +967,7 @@ tr:last-child td{{border-bottom:none}}
   </div>
 </div>
 
-<div class="upd">Backtest 2015-2024 (in-sample) · Forward Test 2025-{END} (out-of-sample) · VIX-mapped lookback · DD circuit breaker -15%</div>
+<div class="upd">Backtest 2015-2024 (in-sample) · Forward Test 2025-{END} (out-of-sample) · VIX-mapped lookback (corrected v2)</div>
 </div>
 
 {chartjs_tag}
@@ -981,6 +981,7 @@ var ftEq={json.dumps(ft_eq)};
 var ftNf={json.dumps(ft_nf)};
 var ftDd={json.dumps(ft_dd)};
 var vxD={json.dumps(vix_data)};
+var fpDs={json.dumps(fp_eq_datasets)};
 
 function mkLine(id, datasets, yFmt, height){{
   new Chart(document.getElementById(id),{{
@@ -1001,6 +1002,24 @@ function mkLine(id, datasets, yFmt, height){{
 
 var rupee = function(v){{return 'Rs '+(v/1000).toFixed(0)+'K';}};
 var pct   = function(v){{return v.toFixed(1)+'%';}};
+
+// ── Full-period fixed-LB chart ────────────────────────────────────────────────
+(function(){{
+  var datasets = fpDs.map(function(ds){{
+    return {{
+      label: ds.label,
+      data: ds.data,
+      parsing: false,
+      borderColor: ds.borderColor,
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.3,
+      fill: false
+    }};
+  }});
+  mkLine('ec-fp', datasets, rupee);
+}})();
 
 mkLine('ec-bt',[
   {{label:'Adaptive RS (BT)', data:btEq, parsing:false, borderColor:'#4f8ef7',
@@ -1073,8 +1092,6 @@ def make_mock_data():
         start = np.random.uniform(30, 300)
         lr    = np.random.normal(drift, vol, len(trade_dates))
         prices_dict[sym] = start * np.exp(np.cumsum(lr))
-    # Mock LIQUIDBEES — stable ~1000, tiny drift
-    prices_dict[CASH_SYM] = 1000 * np.exp(np.cumsum(np.random.normal(0.00025, 0.0001, len(trade_dates))))
     prices = pd.DataFrame(prices_dict, index=trade_dates)
     vix_vals = np.random.normal(16, 3, len(trade_dates))
     for yr, spike in [(2020,30),(2022,22),(2016,18)]:
@@ -1107,7 +1124,7 @@ if __name__ == "__main__":
                              period_start=FETCH_START, period_end=BT_END,
                              label="Backtest 2015–2024",
                              initial_capital=INITIAL,
-                             use_circuit_breaker=True)
+)
     bt_stats  = calc_stats(bt_result, initial=INITIAL) if bt_result else None
 
     # ── Step 3: forward test 2025–today ──────────────────────────────────
@@ -1118,13 +1135,16 @@ if __name__ == "__main__":
                              period_start=FT_START, period_end=END,
                              label="Forward Test 2025–today",
                              initial_capital=INITIAL,
-                             use_circuit_breaker=True)
+)
     ft_stats  = calc_stats(ft_result, initial=INITIAL) if ft_result else None
 
-    # ── Step 4: current signal from FT log ───────────────────────────────
+    # ── Step 4: full-period fixed-LB comparison (2015→today) ───────────────
+    fullperiod_lbs = run_fullperiod_all_lbs(prices, vix, FETCH_START, END)
+
+    # ── Step 5: current signal from FT log ───────────────────────────────────
     signal = get_current_signal(prices, vix, ft_result or bt_result)
 
-    # ── Step 5: print summary ─────────────────────────────────────────────
+    # ── Step 6: print summary ─────────────────────────────────────────────
     print(f"\n{'='*60}")
     print("BACKTEST 2015–2024 (In-sample)")
     print(f"{'='*60}")
@@ -1149,17 +1169,22 @@ if __name__ == "__main__":
                     ("Alpha",f"{ft_stats['alpha']:+.1f}%")]:
             print(f"  {k:<12}: {v}")
 
+    print(f"\n{'='*60}")
+    print(f"FULL-PERIOD FIXED-LB ({FETCH_START} -> {END})")
+    print(f"{'='*60}")
+    print(f"{'LB':>4}  {'CAGR':>8}  {'Sharpe':>7}  {'MDD':>8}  {'Final':>14}")
+    print("-"*50)
+    for lb, r in sorted(fullperiod_lbs.items()):
+        print(f"{lb:>3}d  {r['cagr_full']:>+7.1f}%  {r['sharpe']:>7.2f}  {r['mdd']:>+7.1f}%  Rs {r['final']/1e5:>8.2f}L")
+
     if signal:
         print(f"\nCURRENT SIGNAL ({signal['signal_date']})")
         print(f"  VIX: {signal['cur_vix']} | Regime: {signal['cur_regime']} | LB: {signal['cur_lb']}d")
-        if signal.get("in_circuit"):
-            print("  ⚡ CIRCUIT BREAKER ACTIVE — in LIQUIDBEES")
-        else:
-            print(f"  BUY: {', '.join(signal['top3_names'])}")
+        print(f"  BUY: {', '.join(signal['top3_names'])}")
 
-    # ── Step 6: write HTML ────────────────────────────────────────────────
+    # ── Step 7: write HTML ────────────────────────────────────────────────
     os.makedirs("docs", exist_ok=True)
-    html = build_html(prices, vix, yearly,
+    html = build_html(prices, vix, yearly, fullperiod_lbs,
                       bt_result or {"eq":[],"nf":[],"dd":[],"log":[],"trades":0,
                                     "hold_count":{},"last_scores":None,"last_rets":None,"avail":[]},
                       ft_result,
