@@ -242,9 +242,16 @@ def vix_to_regime_label(vix_val):
 
 # ── SINGLE LOOKBACK BACKTEST (for calibration table) ─────────────────────────
 def run_fixed_lb(prices, vix, lb, start, end_date):
-    avail = prices.columns.tolist()
+    """
+    Fixed-lookback RS backtest.
+    Trading logic (correct cash accounting):
+      1. Sell ALL positions every week that holdings change.
+      2. Distribute total capital equally across new TOP_N.
+      3. No partial-sell/rebuy confusion — simple full liquidate + rebuy.
+    """
+    avail = [c for c in prices.columns if prices[c].notna().sum() > lb + 5]
     data_start_lb = prices.index[0]
-    start_dt = max(pd.Timestamp(start), data_start_lb + pd.Timedelta(days=lb*2))
+    start_dt = max(pd.Timestamp(start), data_start_lb + pd.Timedelta(days=lb * 2))
     fridays = pd.date_range(start_dt, end_date, freq="W-FRI")
     pairs = []
     for f in fridays:
@@ -252,58 +259,91 @@ def run_fixed_lb(prices, vix, lb, start, end_date):
         ei = si + 1
         if 0 <= si < len(prices) and ei < len(prices):
             pairs.append((si, ei))
-    if not pairs: return None
+    if not pairs:
+        return None
 
-    cash = float(INITIAL); holdings = {}; cur3 = []
-    peak = float(INITIAL); eq = []
+    cash = float(INITIAL)
+    holdings = {}   # sym -> shares
+    cur3 = []
+    peak = float(INITIAL)
+    eq = []
 
-    for wi,(si,ei) in enumerate(pairs):
+    for wi, (si, ei) in enumerate(pairs):
         scores, rets = compute_rs(prices, si, avail, lb)
-        ranked = sorted([(s,v) for s,v in scores.items() if v is not None], key=lambda x:-x[1])
-        new3 = [s for s,_ in ranked[:TOP_N]]
-        if len(new3) < TOP_N: continue
-        needs = (wi==0) or (set(new3)!=set(cur3))
-        exiting = [s for s in cur3 if s not in new3]
-        if needs:
-            for sym in exiting:
-                if sym in holdings and holdings[sym]>0:
-                    cash += holdings[sym]*float(prices[sym].iloc[ei])*(1-COST_PCT)
-                    del holdings[sym]
-            retained = sum(holdings[s]*float(prices[s].iloc[ei]) for s in holdings if s in prices.columns)
-            target = (cash+retained)/TOP_N
-            for sym in new3:
-                px = float(prices[sym].iloc[ei])
-                cval = holdings.get(sym,0)*px
-                entering = sym not in cur3
-                if entering or abs(cval-target)>target*0.05:
-                    if sym in holdings and holdings[sym]>0:
-                        cash += holdings[sym]*px*(1-COST_PCT)
-                    cash -= target
-                    holdings[sym] = target*(1-COST_PCT)/px
-
-        holdings_val = sum(
-            holdings[s]*float(prices[s].iloc[ei])
-            for s in holdings if s in prices.columns
-            and not np.isnan(float(prices[s].iloc[ei]))
+        ranked = sorted(
+            [(s, v) for s, v in scores.items() if v is not None],
+            key=lambda x: -x[1]
         )
-        port = max(cash + holdings_val, 0)
-        if port > peak: peak = port
-        eq.append({"date": str(prices.index[si].date()), "val": port,
-                   "dd": (port-peak)/peak*100})
+        new3 = [s for s, _ in ranked[:TOP_N]]
+        if len(new3) < TOP_N:
+            continue
+
+        changed = (wi == 0) or (set(new3) != set(cur3))
+
+        if changed:
+            # Step 1: liquidate everything at execution price
+            for sym, shares in list(holdings.items()):
+                px = prices[sym].iloc[ei]
+                if shares > 0 and np.isfinite(px) and px > 0:
+                    cash += shares * float(px) * (1.0 - COST_PCT)
+            holdings.clear()
+
+            # Step 2: sanity-check cash (should always be positive)
+            cash = max(cash, 0.0)
+
+            # Step 3: buy equal slices
+            target = cash / TOP_N
+            for sym in new3:
+                px = prices[sym].iloc[ei]
+                if not np.isfinite(px) or px <= 0:
+                    continue
+                buy_cost = min(target, cash)          # never spend more than available
+                shares   = buy_cost * (1.0 - COST_PCT) / float(px)
+                holdings[sym] = shares
+                cash -= buy_cost
+
+            cash = max(cash, 0.0)   # floating-point safety
+
+        # Mark-to-market
+        holdings_val = 0.0
+        for sym, shares in holdings.items():
+            px = prices[sym].iloc[ei]
+            if np.isfinite(px) and px > 0:
+                holdings_val += shares * float(px)
+
+        port = cash + holdings_val
+        if not np.isfinite(port) or port < 0:
+            port = 0.0
+        if port > peak:
+            peak = port
+        dd = (port - peak) / peak * 100.0 if peak > 0 else 0.0
+        eq.append({"date": str(prices.index[si].date()), "val": port, "dd": dd})
         cur3 = new3
 
-    if len(eq) < 8: return None
-    vals = [e["val"] for e in eq]
-    wr = [(vals[i]-vals[i-1])/vals[i-1] for i in range(1,len(vals))]
-    n_yrs = max((pd.Timestamp(end_date)-pd.Timestamp(start)).days/365.25, 0.1)
-    cagr = (pow(max(vals[-1]/INITIAL, 1e-6), 1/n_yrs) - 1)*100 if vals else 0
-    cagr = max(min(cagr, 500), -99)
-    sharpe = (np.mean(wr)/np.std(wr))*np.sqrt(52) if np.std(wr)>0 else 0
-    mdd = min(e["dd"] for e in eq)
-    ret = (vals[-1]-INITIAL)/INITIAL*100
-    ret = max(min(ret, 50000.0), -100.0)  # clamp absurd ret
-    return dict(cagr=round(cagr,2), sharpe=round(sharpe,2), mdd=round(mdd,2),
-                ret=round(ret,2), weeks=len(eq), final=round(vals[-1],0), eq=eq)
+    if len(eq) < 8:
+        return None
+
+    vals  = [e["val"] for e in eq]
+    final = vals[-1]
+    wr    = [(vals[i] - vals[i-1]) / vals[i-1] for i in range(1, len(vals))
+             if vals[i-1] > 0]
+    n_yrs = max((pd.Timestamp(end_date) - pd.Timestamp(start)).days / 365.25, 0.1)
+
+    if not np.isfinite(final) or final <= 0:
+        return None
+
+    cagr   = (pow(final / INITIAL, 1.0 / n_yrs) - 1.0) * 100.0
+    cagr   = round(max(min(cagr, 500.0), -99.0), 2)
+    sharpe = 0.0
+    if wr and np.std(wr) > 0:
+        sharpe = round(float(np.mean(wr) / np.std(wr)) * np.sqrt(52), 2)
+    mdd    = round(min(e["dd"] for e in eq), 2)
+    ret    = round((final - INITIAL) / INITIAL * 100.0, 2)
+
+    return dict(
+        cagr=cagr, sharpe=sharpe, mdd=mdd,
+        ret=ret, weeks=len(eq), final=round(final, 2), eq=eq
+    )
 
 # ── PER-YEAR CALIBRATION (backtest period only) ────────────────────────────────
 def calibrate_yearly(prices, vix, cal_start="2015-01-01", cal_end="2024-12-31"):
@@ -463,54 +503,40 @@ def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
 
         if len(new3) < 1: continue
 
-        needs    = (wi==0) or (set(new3) != set(cur3))
+        changed  = (wi == 0) or (set(new3) != set(cur3))
         exiting  = [s for s in cur3 if s not in new3]
         entering = [s for s in new3  if s not in cur3]
 
-        if needs:
-            # Sell all exiting
-            for sym in exiting:
-                if sym in holdings and holdings[sym] > 0:
-                    px    = float(prices[sym].iloc[ei])
-                    cash += holdings[sym] * px * (1 - COST_PCT)
+        if changed:
+            # Step 1: sell ALL holdings at execution price
+            for sym, shares in list(holdings.items()):
+                px = prices[sym].iloc[ei] if sym in prices.columns else float('nan')
+                if shares > 0 and np.isfinite(px) and float(px) > 0:
+                    cash += shares * float(px) * (1.0 - COST_PCT)
                     total_trades += 1
-                    del holdings[sym]
+            holdings.clear()
+            cash = max(cash, 0.0)
 
-            retained = sum(
-                holdings[s] * float(prices[s].iloc[ei])
-                for s in holdings if s in prices.columns
-                and not np.isnan(float(prices[s].iloc[ei]))
-            )
-            total_capital = cash + retained
-            n_slots = min(TOP_N, len(new3))
-            target  = total_capital / n_slots
-
+            # Step 2: buy equal slices of new TOP_N
+            target = cash / TOP_N
             for sym in new3:
                 if sym not in prices.columns: continue
                 px = float(prices[sym].iloc[ei])
-                if np.isnan(px) or px <= 0: continue
-                cval = holdings.get(sym,0) * px
-                needs_trade = sym in entering or abs(cval-target) > target*0.05
-
-                if needs_trade:
-                    if sym in holdings and holdings[sym] > 0:
-                        cash += holdings[sym] * px * (1-COST_PCT)
-                        total_trades += 1
-                        holdings[sym] = 0
-                    available = max(cash, 0)
-                    buy_amt   = min(target, available)
-                    if buy_amt > 0:
-                        holdings[sym]  = (buy_amt * (1-COST_PCT)) / px
-                        cash          -= buy_amt
-                        total_trades  += 1
+                if not np.isfinite(px) or px <= 0: continue
+                buy_amt = min(target, max(cash, 0.0))
+                if buy_amt > 0:
+                    holdings[sym] = buy_amt * (1.0 - COST_PCT) / px
+                    cash -= buy_amt
+                    total_trades += 1
+            cash = max(cash, 0.0)
 
         # ── Mark-to-market ────────────────────────────────────────────────
-        holdings_val = sum(
-            holdings[s] * float(prices[s].iloc[ei])
-            for s in holdings if s in prices.columns
-            and not np.isnan(float(prices[s].iloc[ei])) and prices[s].iloc[ei] > 0
-        )
-        port = max(cash + holdings_val, 0)
+        holdings_val = 0.0
+        for sym, shares in holdings.items():
+            px = float(prices[sym].iloc[ei]) if sym in prices.columns else float('nan')
+            if np.isfinite(px) and px > 0:
+                holdings_val += shares * px
+        port = max(cash + holdings_val, 0.0)
         if port > peak: peak = port
         ddown = (port-peak)/peak*100
 
@@ -527,7 +553,7 @@ def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
         log.append({
             "date":    date_str, "exec": exec_str,
             "top3":    new3, "exiting": exiting, "entering": entering,
-            "changed": needs and wi>0, "capital": round(port,2),
+            "changed": changed and wi>0, "capital": round(port,2),
             "vix":     round(vix_val,1) if vix_val else None,
             "regime":  regime, "lb": lb,
             "scores": {s:round(v,6) if v else None for s,v in scores.items()},
