@@ -301,6 +301,7 @@ def run_fixed_lb(prices, vix, lb, start, end_date):
     sharpe = (np.mean(wr)/np.std(wr))*np.sqrt(52) if np.std(wr)>0 else 0
     mdd = min(e["dd"] for e in eq)
     ret = (vals[-1]-INITIAL)/INITIAL*100
+    ret = max(min(ret, 50000.0), -100.0)  # clamp absurd ret
     return dict(cagr=round(cagr,2), sharpe=round(sharpe,2), mdd=round(mdd,2),
                 ret=round(ret,2), weeks=len(eq), final=round(vals[-1],0), eq=eq)
 
@@ -368,9 +369,41 @@ def calibrate_yearly(prices, vix, cal_start="2015-01-01", cal_end="2024-12-31"):
         wins   = sum(1 for r in results.values() if r.get("best_lb") == lb)
         n      = len(results)
         if rets:
-            print(f"{lb:>3}d  {np.mean(rets):>+6.1f}%  {np.mean(cagrs):>+7.1f}%  "
-                  f"{np.mean(sharps):>9.2f}  {np.mean(mdds):>+6.1f}%  {wins:>4}/{n}")
+            avg_ret  = float(np.nanmean([x for x in rets  if np.isfinite(x)]) if any(np.isfinite(x) for x in rets)  else float('nan'))
+            avg_cagr = float(np.nanmean([x for x in cagrs if np.isfinite(x)]) if any(np.isfinite(x) for x in cagrs) else float('nan'))
+            avg_shrp = float(np.nanmean([x for x in sharps if np.isfinite(x)]) if any(np.isfinite(x) for x in sharps) else float('nan'))
+            avg_mdd  = float(np.nanmean([x for x in mdds  if np.isfinite(x)]) if any(np.isfinite(x) for x in mdds)  else float('nan'))
+            r_str = f"{avg_ret:>+6.1f}%" if np.isfinite(avg_ret) else "    N/A"
+            c_str = f"{avg_cagr:>+7.1f}%" if np.isfinite(avg_cagr) else "     N/A"
+            print(f"{lb:>3}d  {r_str:>7}  {c_str:>8}  "
+                  f"{avg_shrp:>9.2f}  {avg_mdd:>+6.1f}%  {wins:>4}/{n}")
     print()
+    return results
+
+# ── FULL-PERIOD FIXED-LB COMPARISON ──────────────────────────────────────────
+def run_fullperiod_all_lbs(prices, vix, full_start, full_end):
+    """
+    Run each fixed lookback (15/30/45/55/65d) over the entire date range
+    (2015 -> today) independently with INITIAL capital each.
+    Returns dict keyed by lookback with stats + equity curve.
+    """
+    print(f"\nFull-period fixed-LB comparison: {full_start} -> {full_end}")
+    lb_colors = {15:"#f472b6", 30:"#22c55e", 45:"#f59e0b", 55:"#fb923c", 65:"#ef4444"}
+    results = {}
+    n_yrs = max((pd.Timestamp(full_end) - pd.Timestamp(full_start)).days / 365.25, 0.1)
+    for lb in LOOKBACKS:
+        r = run_fixed_lb(prices, vix, lb, full_start, full_end)
+        if r is None:
+            print(f"  {lb:>2}d -> no result")
+            continue
+        # Recompute CAGR over the true full span (run_fixed_lb uses per-period span)
+        cagr_full = (pow(max(r["final"] / INITIAL, 1e-6), 1.0 / n_yrs) - 1.0) * 100.0
+        cagr_full = round(max(min(cagr_full, 500.0), -99.0), 2)
+        r["cagr_full"] = cagr_full
+        r["color"]     = lb_colors.get(lb, "#8892b0")
+        results[lb]    = r
+        print(f"  {lb:>2}d -> CAGR {cagr_full:>+6.1f}%  Sharpe {r['sharpe']:>5.2f}  "
+              f"MDD {r['mdd']:>+6.1f}%  Final Rs {r['final']/1e5:.2f}L")
     return results
 
 # ── ADAPTIVE BACKTEST ENGINE ───────────────────────────────────────────────────
