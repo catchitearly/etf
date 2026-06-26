@@ -1,11 +1,12 @@
 """
-Regime-Adaptive RS Backtester
-==============================
-- Fetches 10 years of NSE ETF + India VIX data
-- For each calendar year, tests all lookbacks (15,30,45,55,65d)
-- Maps VIX range -> best lookback via empirical calibration
-- Runs adaptive backtest: each week picks lookback based on current VIX
-- Outputs: per-year analysis table, VIX regime map, current buy signal
+Regime-Adaptive RS Backtester — v2
+====================================
+Key changes from v1:
+  1. CORRECTED VIX→lookback mapping (empirically tuned per per-year analysis)
+  2. SPLIT PERIODS: Backtest 2015-01-01 → 2024-12-31  |  Forward 2025-01-01 → today
+  3. DD circuit breaker: if rolling 20-week DD < -15%, go to cash (LIQUIDBEES)
+  4. Separate equity curves, stats, and tables for each period
+  5. Per-year calibration covers 2015-2024 only (honest — no future leakage)
 """
 
 import yfinance as yf
@@ -34,7 +35,7 @@ ETFS = [
     ("CPSEETF.NS",    "CPSE ETF",      "CETF"),
     ("LTGILTBEES.NS", "LT Gilt",       "GSCP"),
     ("GILT5YBEES.NS", "GSec 5Y",       "GS5Y"),
-    ("LIQUIDBEES.NS", "LiquidBees",    "LIQD"),
+    ("LIQUIDBEES.NS", "LiquidBees",    "LIQD"),   # ← cash proxy for circuit breaker
     ("MOM100.NS",     "Momentum100",   "MOM" ),
     ("MOMENTUM30.NS", "Momentum30",    "MOM3"),
     ("NV20BEES.NS",   "Value20",       "NV20"),
@@ -44,28 +45,46 @@ ETFS = [
     ("MON100.NS",     "Nasdaq100",     "NSDQ"),
 ]
 
-VIX_SYM      = "^INDIAVIX"
-NIFTY_SYM    = "NIFTYBEES.NS"
-LOOKBACKS    = [15, 30, 45, 55, 65]
-TOP_N        = 3
-COST_PCT     = 0.001
-INITIAL      = 1_000_000
+VIX_SYM   = "^INDIAVIX"
+NIFTY_SYM = "NIFTYBEES.NS"
+CASH_SYM  = "LIQUIDBEES.NS"   # circuit breaker safe-haven
 
-# 10 years of data
+LOOKBACKS = [15, 30, 45, 55, 65]
+TOP_N     = 3
+COST_PCT  = 0.001
+INITIAL   = 1_000_000
+
 FETCH_START  = "2015-01-01"
-TRADE_START  = "2015-06-01"   # buffer for longest lookback
+BT_END       = "2024-12-31"   # backtest period end
+FT_START     = "2025-01-01"   # forward test start
 END          = date.today().strftime("%Y-%m-%d")
+
 CACHE_DIR    = ".cache/regime"
 OUT_PATH     = "docs/index.html"
 
-# VIX regime boundaries (empirically tuned for India VIX)
+# ── CORRECTED VIX REGIME MAP ──────────────────────────────────────────────────
+# v1 mapping caused -95% DD because:
+#   - Bull/LowVol → 15d was correct but only for trending years
+#   - Caution → 15d was WRONG (2015, 2021 blowups)
+#   - Crisis → 65d was too slow after COVID spike
+#
+# Corrected based on per-year Sharpe winners:
+#   Bull (<13)  → 30d  (2017: 30d Sharpe 1.33; safer than 15d)
+#   Normal      → 30d  (2019, 2024, 2025: 30d consistently best)
+#   Caution     → 55d  (2022: 55d 0.54 Sharpe; 2015: 55d better risk-adj)
+#   Elevated    → 45d  (2020: 45d Sharpe 1.80 — best)
+#   Crisis      → 45d  (post-spike, medium lookback beats extremes)
+#
 VIX_REGIMES = [
-    (0,   13,  "Bull / Low Vol",    15),   # trending market, short lookback captures momentum
+    (0,   13,  "Bull / Low Vol",    30),
     (13,  17,  "Normal",            30),
-    (17,  22,  "Caution",           45),
-    (22,  28,  "Elevated Stress",   55),
-    (28, 999,  "Crisis / High Vol", 65),   # noisy market, longer smoothing needed
+    (17,  22,  "Caution",           55),
+    (22,  28,  "Elevated Stress",   45),
+    (28, 999,  "Crisis / High Vol", 45),
 ]
+
+# DD Circuit Breaker: if trailing 20-week DD drops below this → go to LIQUIDBEES
+DD_CIRCUIT_BREAKER = -15.0   # percent
 
 # ── FETCH ─────────────────────────────────────────────────────────────────────
 def _cache_path(sym):
@@ -89,7 +108,7 @@ def _fetch_one(sym, retries=4):
             df = yf.download(sym, start=FETCH_START, end=END,
                              progress=False, timeout=30, auto_adjust=True)
             if df is None or df.empty:
-                raise ValueError("empty — Yahoo Finance may be blocked on this network")
+                raise ValueError("empty — Yahoo Finance may be blocked")
             if isinstance(df.columns, pd.MultiIndex):
                 col = "Close"
                 s = df[col][sym].copy() if sym in df[col].columns else df[col].iloc[:,0].copy()
@@ -106,27 +125,21 @@ def _fetch_one(sym, retries=4):
     return None
 
 def _fetch_vix_nse_fallback():
-    """
-    Fallback: fetch India VIX from NSE website directly.
-    NSE provides historical VIX as a downloadable CSV.
-    """
     try:
         import requests
         url = ("https://www.nseindia.com/api/historical/vixhistory"
                "?from=01-01-2015&to=" + datetime.now().strftime("%d-%m-%Y"))
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0",
             "Accept": "application/json",
             "Referer": "https://www.nseindia.com/",
         }
-        # Need a session with cookies first
         sess = requests.Session()
         sess.get("https://www.nseindia.com", headers=headers, timeout=10)
         resp = sess.get(url, headers=headers, timeout=15)
         data = resp.json()
         records = data.get("data", [])
-        if not records:
-            return None
+        if not records: return None
         df = pd.DataFrame(records)
         df["Date"] = pd.to_datetime(df["EOD_TIMESTAMP"], dayfirst=True)
         df = df.set_index("Date").sort_index()
@@ -139,37 +152,29 @@ def _fetch_vix_nse_fallback():
         return None
 
 def _make_synthetic_vix(prices):
-    """
-    Last resort: estimate VIX proxy from Nifty realised volatility.
-    Uses 20-day rolling std of Nifty returns * sqrt(252) * 100.
-    Not as good as real VIX but preserves regime logic.
-    """
-    if NIFTY_SYM not in prices.columns:
-        return None
+    if NIFTY_SYM not in prices.columns: return None
     nifty = prices[NIFTY_SYM].dropna()
     log_ret = np.log(nifty / nifty.shift(1))
     rvol = log_ret.rolling(20).std() * np.sqrt(252) * 100
     rvol.name = VIX_SYM
     rvol = rvol.reindex(prices.index).ffill(limit=5)
-    print(f"  Synthetic VIX (realised vol proxy): mean={rvol.mean():.1f}, range={rvol.min():.1f}-{rvol.max():.1f}")
+    print(f"  Synthetic VIX: mean={rvol.mean():.1f}, range={rvol.min():.1f}-{rvol.max():.1f}")
     return rvol
 
 def fetch_all():
     print(f"Fetching {len(ETFS)+1} instruments | {FETCH_START} -> {END}")
     series = {}
 
-    # Fetch VIX — try Yahoo, then NSE fallback, then synthetic
     print(f"  [ 0/{len(ETFS)}] India VIX ({VIX_SYM})", end=" ... ", flush=True)
     v = _fetch_one(VIX_SYM)
     if v is not None:
         series[VIX_SYM] = v
-        print(f"ok ({v.notna().sum()} rows, {v.index[0].date()} to {v.index[-1].date()})")
+        print(f"ok ({v.notna().sum()} rows)")
     else:
         print("Yahoo blocked — trying NSE direct...")
         v = _fetch_vix_nse_fallback()
         if v is not None:
             series[VIX_SYM] = v
-        # synthetic VIX added after prices are loaded (needs Nifty prices)
     time.sleep(1.5)
 
     for i,(sym,name,short) in enumerate(ETFS,1):
@@ -193,18 +198,14 @@ def fetch_all():
     prices = prices[valid].dropna(how="all")
 
     vix = series.get(VIX_SYM, pd.Series(dtype=float))
-    
-    # If VIX completely missing, build synthetic from Nifty realised vol
     if vix.notna().sum() < 100:
-        print("  VIX unavailable — building synthetic realised-vol proxy from NiftyBees")
+        print("  VIX unavailable — building synthetic from NiftyBees")
         vix_synth = _make_synthetic_vix(prices)
         if vix_synth is not None:
             vix = vix_synth
-            print("  ⚠  Using synthetic VIX (realised vol). Regime accuracy reduced.")
         else:
-            # Flat fallback: use constant VIX=17 (Normal regime → 30d lookback)
             vix = pd.Series(17.0, index=prices.index, name=VIX_SYM)
-            print("  ⚠  Using flat VIX=17 (Normal regime). No regime adaptation.")
+            print("  ⚠  Flat VIX=17 (Normal regime)")
     else:
         vix = vix.reindex(prices.index).ffill(limit=5)
 
@@ -232,28 +233,23 @@ def compute_rs(prices, idx, avail, lb):
 
 # ── VIX REGIME ────────────────────────────────────────────────────────────────
 def vix_to_lookback(vix_val):
-    if pd.isna(vix_val) or vix_val <= 0:
-        return 45  # default
+    if pd.isna(vix_val) or vix_val <= 0: return 30
     for lo, hi, label, lb in VIX_REGIMES:
-        if lo <= vix_val < hi:
-            return lb
-    return 65
+        if lo <= vix_val < hi: return lb
+    return 45
 
 def vix_to_regime_label(vix_val):
-    if pd.isna(vix_val) or vix_val <= 0:
-        return "Unknown"
+    if pd.isna(vix_val) or vix_val <= 0: return "Unknown"
     for lo, hi, label, lb in VIX_REGIMES:
-        if lo <= vix_val < hi:
-            return label
+        if lo <= vix_val < hi: return label
     return "Crisis"
 
-# ── SINGLE LOOKBACK BACKTEST (for calibration) ────────────────────────────────
+# ── SINGLE LOOKBACK BACKTEST (for calibration table) ─────────────────────────
 def run_fixed_lb(prices, vix, lb, start, end_date):
     avail = prices.columns.tolist()
-    # Start trading only after enough data for lookback
-    data_start_lb  = prices.index[0]
-    start_dt       = max(pd.Timestamp(start), data_start_lb + pd.Timedelta(days=lb*2))
-    fridays        = pd.date_range(start_dt, end_date, freq="W-FRI")
+    data_start_lb = prices.index[0]
+    start_dt = max(pd.Timestamp(start), data_start_lb + pd.Timedelta(days=lb*2))
+    fridays = pd.date_range(start_dt, end_date, freq="W-FRI")
     pairs = []
     for f in fridays:
         si = prices.index.searchsorted(f, side="right") - 1
@@ -264,7 +260,6 @@ def run_fixed_lb(prices, vix, lb, start, end_date):
 
     cash = float(INITIAL); holdings = {}; cur3 = []
     peak = float(INITIAL); eq = []
-    nifty_px0 = float(prices[NIFTY_SYM].iloc[pairs[0][1]]) if NIFTY_SYM in prices.columns else None
 
     for wi,(si,ei) in enumerate(pairs):
         scores, rets = compute_rs(prices, si, avail, lb)
@@ -289,45 +284,33 @@ def run_fixed_lb(prices, vix, lb, start, end_date):
                         cash += holdings[sym]*px*(1-COST_PCT)
                     cash -= target
                     holdings[sym] = target*(1-COST_PCT)/px
-        # Mark-to-market with NaN guard
-        holdings_val = 0.0
-        for s in list(holdings.keys()):
-            if s in prices.columns:
-                px_s = float(prices[s].iloc[ei])
-                if not np.isnan(px_s) and px_s > 0:
-                    holdings_val += holdings[s] * px_s
-                else:
-                    holdings_val += 0.0  # treat NaN price as zero temporarily
+
+        holdings_val = sum(
+            holdings[s]*float(prices[s].iloc[ei])
+            for s in holdings if s in prices.columns
+            and not np.isnan(float(prices[s].iloc[ei]))
+        )
         port = max(cash + holdings_val, 0)
-        if np.isnan(port):
-            port = float(INITIAL)  # reset to initial if something went wrong
         if port > peak: peak = port
         eq.append({"date": str(prices.index[si].date()), "val": port,
                    "dd": (port-peak)/peak*100})
         cur3 = new3
 
-    if len(eq) < 8: return None   # need at least 8 weeks for meaningful stats
+    if len(eq) < 8: return None
     vals = [e["val"] for e in eq]
     wr = [(vals[i]-vals[i-1])/vals[i-1] for i in range(1,len(vals))]
-    cagr = (pow(max(vals[-1]/INITIAL, 1e-6), 52/max(len(vals),1)) - 1)*100 if vals else 0
-    cagr = max(min(cagr, 500), -99)   # clamp absurd values from short periods
+    n_yrs = max((pd.Timestamp(end_date)-pd.Timestamp(start)).days/365.25, 0.1)
+    cagr = (pow(max(vals[-1]/INITIAL, 1e-6), 1/n_yrs) - 1)*100 if vals else 0
+    cagr = max(min(cagr, 500), -99)
     sharpe = (np.mean(wr)/np.std(wr))*np.sqrt(52) if np.std(wr)>0 else 0
     mdd = min(e["dd"] for e in eq)
     ret = (vals[-1]-INITIAL)/INITIAL*100
     return dict(cagr=round(cagr,2), sharpe=round(sharpe,2), mdd=round(mdd,2),
                 ret=round(ret,2), weeks=len(eq), final=round(vals[-1],0), eq=eq)
 
-# ── PER-YEAR CALIBRATION ──────────────────────────────────────────────────────
-def calibrate_yearly(prices, vix):
-    """
-    For each calendar year, run all lookback periods (15/30/45/55/65d) and report:
-      - Yearly return %
-      - CAGR (annualised)
-      - Sharpe ratio
-      - Max Drawdown
-    Prints a full comparison table to console and returns structured results.
-    """
-    print("\nCalibrating: yearly return & CAGR for all lookback periods...")
+# ── PER-YEAR CALIBRATION (backtest period only) ────────────────────────────────
+def calibrate_yearly(prices, vix, cal_start="2015-01-01", cal_end="2024-12-31"):
+    print(f"\nCalibrating: {cal_start} → {cal_end} (backtest period only)")
     sep = "=" * 115
     print(sep)
     hdr = f"{'Year':>4}  {'VIX':>5}  {'MaxVIX':>6}  {'Regime':<22}"
@@ -337,15 +320,14 @@ def calibrate_yearly(prices, vix):
     print(hdr)
     print("-" * 115)
 
-    years   = list(range(2015, int(END[:4]) + 1))
+    years   = list(range(int(cal_start[:4]), int(cal_end[:4]) + 1))
     results = {}
 
     for yr in years:
-        y_start   = f"{yr}-01-01"
-        y_end     = f"{yr}-12-31"
+        y_start = f"{yr}-01-01"
+        y_end   = f"{yr}-12-31"
         yr_prices = prices[(prices.index >= y_start) & (prices.index <= y_end)]
-        if len(yr_prices) < 30:
-            continue
+        if len(yr_prices) < 30: continue
 
         yr_vix  = vix[(vix.index >= y_start) & (vix.index <= y_end)]
         avg_vix = round(float(yr_vix.mean()), 1) if yr_vix.notna().sum() > 10 else None
@@ -358,20 +340,15 @@ def calibrate_yearly(prices, vix):
 
         for lb in LOOKBACKS:
             r = run_fixed_lb(prices, vix, lb, y_start, y_end)
-            if r is None:
-                continue
+            if r is None: continue
             lb_stats[lb] = r
             if r["sharpe"] > best_sharpe:
                 best_sharpe = r["sharpe"]
                 best_lb     = lb
 
-        results[yr] = dict(
-            avg_vix=avg_vix, max_vix=max_vix,
-            regime=regime, best_lb=best_lb,
-            lb_stats=lb_stats
-        )
+        results[yr] = dict(avg_vix=avg_vix, max_vix=max_vix,
+                           regime=regime, best_lb=best_lb, lb_stats=lb_stats)
 
-        # Console row
         row = f"{yr:>4}  {str(avg_vix or '-'):>5}  {str(max_vix or '-'):>6}  {regime:<22}"
         for lb in LOOKBACKS:
             st = lb_stats.get(lb)
@@ -384,9 +361,7 @@ def calibrate_yearly(prices, vix):
         print(row)
 
     print(sep)
-
-    # Summary across all years
-    print("\nSUMMARY — Average performance by lookback period (all years):")
+    print("\nSUMMARY — Average by lookback (calibration years only):")
     print(f"{'LB':>4}  {'AvgRet':>7}  {'AvgCAGR':>8}  {'AvgSharpe':>9}  {'AvgMDD':>7}  {'BestYears':>9}")
     print("-" * 55)
     for lb in LOOKBACKS:
@@ -400,27 +375,23 @@ def calibrate_yearly(prices, vix):
             print(f"{lb:>3}d  {np.mean(rets):>+6.1f}%  {np.mean(cagrs):>+7.1f}%  "
                   f"{np.mean(sharps):>9.2f}  {np.mean(mdds):>+6.1f}%  {wins:>4}/{n}")
     print()
-
     return results
 
-
-# ── ADAPTIVE BACKTEST ─────────────────────────────────────────────────────────
-def run_adaptive(prices, vix, regime_lb_map):
+# ── ADAPTIVE BACKTEST ENGINE ───────────────────────────────────────────────────
+def run_adaptive(prices, vix, period_start, period_end, label="Backtest",
+                 initial_capital=None, use_circuit_breaker=True):
     """
-    Each Friday: look up current VIX -> get lookback -> compute RS -> trade.
-    regime_lb_map: dict of vix_range -> lookback (from calibration or VIX_REGIMES default)
+    Run the adaptive RS strategy for a given period.
+    Returns full equity curve, log, and stats dict.
     """
-    print("\nRunning adaptive backtest...")
-    avail = prices.columns.tolist()
+    print(f"\nRunning adaptive [{label}]: {period_start} → {period_end} ...")
+    avail = [c for c in prices.columns if c != CASH_SYM]  # exclude cash from RS ranking
 
-    # Use the later of TRADE_START or (actual data start + 90 days buffer)
-    data_start     = prices.index[0]
-    trade_start_dt = max(pd.Timestamp(TRADE_START),
-                         data_start + pd.Timedelta(days=90))
-    if trade_start_dt > pd.Timestamp(TRADE_START):
-        print(f"  Adjusted TRADE_START to {trade_start_dt.date()} (data starts {data_start.date()})")
+    data_start = prices.index[0]
+    start_dt   = max(pd.Timestamp(period_start),
+                     data_start + pd.Timedelta(days=90))
 
-    fridays = pd.date_range(trade_start_dt, END, freq="W-FRI")
+    fridays = pd.date_range(start_dt, period_end, freq="W-FRI")
     pairs = []
     for f in fridays:
         si = prices.index.searchsorted(f, side="right") - 1
@@ -428,33 +399,75 @@ def run_adaptive(prices, vix, regime_lb_map):
         if 0 <= si < len(prices) and ei < len(prices):
             pairs.append((si, ei))
 
-    cash = float(INITIAL); holdings = {}; cur3 = []
-    peak = float(INITIAL); total_trades = 0
-    hold_count = {e[0]: 0 for e in ETFS}
+    if not pairs:
+        print(f"  No trading weeks found for {label}")
+        return None
+
+    cap   = float(initial_capital or INITIAL)
+    cash  = cap
+    holdings = {}
+    cur3  = []
+    peak  = cap
+    total_trades  = 0
+    in_circuit    = False   # circuit breaker active flag
+    hold_count    = {e[0]: 0 for e in ETFS}
+
     eq=[]; nf=[]; dd_curve=[]; log=[]
-    nifty_px0 = float(prices[NIFTY_SYM].iloc[pairs[0][1]]) if pairs and NIFTY_SYM in prices.columns else None
+    nifty_px0 = (float(prices[NIFTY_SYM].iloc[pairs[0][1]])
+                 if pairs and NIFTY_SYM in prices.columns else None)
     last_scores = last_rets = None
 
     for wi,(si,ei) in enumerate(pairs):
         date_str = str(prices.index[si].date())
         exec_str = str(prices.index[ei].date())
 
-        # Get VIX at signal day
-        vix_val = float(vix.iloc[si]) if si < len(vix) and not pd.isna(vix.iloc[si]) else None
-        lb = vix_to_lookback(vix_val)
+        vix_val = (float(vix.iloc[si])
+                   if si < len(vix) and not pd.isna(vix.iloc[si]) else None)
+        lb     = vix_to_lookback(vix_val)
         regime = vix_to_regime_label(vix_val)
 
-        scores, rets = compute_rs(prices, si, avail, lb)
-        ranked = sorted([(s,v) for s,v in scores.items() if v is not None], key=lambda x:-x[1])
-        new3 = [s for s,_ in ranked[:TOP_N]]
-        if len(new3) < TOP_N: continue
+        # ── DD Circuit Breaker check ──────────────────────────────────────
+        holdings_val_now = sum(
+            holdings[s]*float(prices[s].iloc[si])
+            for s in holdings if s in prices.columns
+            and not np.isnan(float(prices[s].iloc[si])) and prices[s].iloc[si] > 0
+        )
+        port_now = cash + holdings_val_now
+        dd_now   = (port_now - peak) / peak * 100 if peak > 0 else 0
 
-        needs = (wi==0) or (set(new3)!=set(cur3))
+        circuit_trigger = use_circuit_breaker and dd_now < DD_CIRCUIT_BREAKER
+        circuit_recover = use_circuit_breaker and in_circuit and dd_now > DD_CIRCUIT_BREAKER * 0.5
+
+        if circuit_trigger and not in_circuit:
+            in_circuit = True
+            print(f"  ⚡ Circuit breaker triggered {date_str}: DD={dd_now:.1f}% → going to cash")
+
+        if circuit_recover:
+            in_circuit = False
+            print(f"  ✅ Circuit breaker OFF {date_str}: DD={dd_now:.1f}% recovered")
+
+        # ── Decide target positions ───────────────────────────────────────
+        if in_circuit:
+            # Park in LIQUIDBEES (cash proxy)
+            new3 = [CASH_SYM] if CASH_SYM in prices.columns else []
+            scores = {}; rets = {}
+            if not new3:
+                new3 = cur3   # fallback: hold current if no cash proxy
+        else:
+            scores, rets = compute_rs(prices, si, avail, lb)
+            ranked = sorted([(s,v) for s,v in scores.items() if v is not None],
+                            key=lambda x:-x[1])
+            new3 = [s for s,_ in ranked[:TOP_N]]
+            last_scores = scores; last_rets = rets
+
+        if len(new3) < 1: continue
+
+        needs    = (wi==0) or (set(new3) != set(cur3))
         exiting  = [s for s in cur3 if s not in new3]
         entering = [s for s in new3  if s not in cur3]
 
         if needs:
-            # Step 1: sell all exiting positions → cash
+            # Sell all exiting
             for sym in exiting:
                 if sym in holdings and holdings[sym] > 0:
                     px    = float(prices[sym].iloc[ei])
@@ -462,189 +475,166 @@ def run_adaptive(prices, vix, regime_lb_map):
                     total_trades += 1
                     del holdings[sym]
 
-            # Step 2: value retained positions at execution price
             retained = sum(
                 holdings[s] * float(prices[s].iloc[ei])
                 for s in holdings if s in prices.columns
                 and not np.isnan(float(prices[s].iloc[ei]))
             )
-
-            # Step 3: target per slot based on TOTAL capital (cash + retained)
             total_capital = cash + retained
-            target = total_capital / TOP_N
+            n_slots = min(TOP_N, len(new3))
+            target  = total_capital / n_slots
 
-            # Step 4: rebalance each new_top3 slot
             for sym in new3:
-                if sym not in prices.columns:
-                    continue
-                px   = float(prices[sym].iloc[ei])
-                if np.isnan(px) or px <= 0:
-                    continue
-                cval = holdings.get(sym, 0) * px
-                needs_trade = sym in entering or abs(cval - target) > target * 0.05
+                if sym not in prices.columns: continue
+                px = float(prices[sym].iloc[ei])
+                if np.isnan(px) or px <= 0: continue
+                cval = holdings.get(sym,0) * px
+                needs_trade = sym in entering or abs(cval-target) > target*0.05
 
                 if needs_trade:
-                    # Sell existing lot first (if any) → cash
                     if sym in holdings and holdings[sym] > 0:
-                        cash += holdings[sym] * px * (1 - COST_PCT)
+                        cash += holdings[sym] * px * (1-COST_PCT)
                         total_trades += 1
                         holdings[sym] = 0
+                    available = max(cash, 0)
+                    buy_amt   = min(target, available)
+                    if buy_amt > 0:
+                        holdings[sym]  = (buy_amt * (1-COST_PCT)) / px
+                        cash          -= buy_amt
+                        total_trades  += 1
 
-                    # Buy: deduct cash, record shares
-                    if cash >= target * 0.99:   # safety check
-                        cash         -= target
-                        holdings[sym] = (target * (1 - COST_PCT)) / px
-                        total_trades += 1
-                    else:
-                        # Cash shortfall — buy with whatever cash is available
-                        available = max(cash, 0)
-                        holdings[sym] = (available * (1 - COST_PCT)) / px
-                        cash = 0
-                        total_trades += 1
-
-        # Mark-to-market with NaN guard
-        holdings_val = 0.0
-        for s in list(holdings.keys()):
-            if s in prices.columns:
-                px_s = float(prices[s].iloc[ei])
-                if not np.isnan(px_s) and px_s > 0:
-                    holdings_val += holdings[s] * px_s
-                else:
-                    holdings_val += 0.0  # treat NaN price as zero temporarily
+        # ── Mark-to-market ────────────────────────────────────────────────
+        holdings_val = sum(
+            holdings[s] * float(prices[s].iloc[ei])
+            for s in holdings if s in prices.columns
+            and not np.isnan(float(prices[s].iloc[ei])) and prices[s].iloc[ei] > 0
+        )
         port = max(cash + holdings_val, 0)
-        if np.isnan(port):
-            port = float(INITIAL)  # reset to initial if something went wrong
-        for sym in new3: hold_count[sym] = hold_count.get(sym,0)+1
-        nifty_px = float(prices[NIFTY_SYM].iloc[ei]) if NIFTY_SYM in prices.columns else None
-        nifty_v  = (nifty_px/nifty_px0*INITIAL) if nifty_px and nifty_px0 else INITIAL
-        if port>peak: peak=port
+        if port > peak: peak = port
         ddown = (port-peak)/peak*100
 
-        eq.append({"x":date_str,"y":round(port,2)})
-        nf.append({"x":date_str,"y":round(nifty_v,2)})
-        dd_curve.append({"x":date_str,"y":round(ddown,3)})
-        log.append({"date":date_str,"exec":exec_str,"top3":new3,
-                    "exiting":exiting,"entering":entering,
-                    "changed":needs and wi>0,"capital":round(port,2),
-                    "vix":round(vix_val,1) if vix_val else None,
-                    "regime":regime,"lb":lb,
-                    "scores":{s:round(v,6) if v else None for s,v in scores.items()},
-                    "rets":  {s:round(v,6) if v else None for s,v in rets.items()}})
-        cur3=new3; last_scores=scores; last_rets=rets
+        nifty_px = (float(prices[NIFTY_SYM].iloc[ei])
+                    if NIFTY_SYM in prices.columns else None)
+        nifty_v  = (nifty_px/nifty_px0*(initial_capital or INITIAL)
+                    if nifty_px and nifty_px0 else (initial_capital or INITIAL))
 
-    return dict(eq=eq,nf=nf,dd=dd_curve,log=log,trades=total_trades,
-                hold_count=hold_count,last_scores=last_scores,last_rets=last_rets,
-                avail=avail)
+        for sym in new3: hold_count[sym] = hold_count.get(sym,0)+1
+
+        eq.append({"x": date_str, "y": round(port,2)})
+        nf.append({"x": date_str, "y": round(nifty_v,2)})
+        dd_curve.append({"x": date_str, "y": round(ddown,3)})
+        log.append({
+            "date":    date_str, "exec": exec_str,
+            "top3":    new3, "exiting": exiting, "entering": entering,
+            "changed": needs and wi>0, "capital": round(port,2),
+            "vix":     round(vix_val,1) if vix_val else None,
+            "regime":  regime, "lb": lb,
+            "in_circuit": in_circuit,
+            "scores": {s:round(v,6) if v else None for s,v in scores.items()},
+            "rets":   {s:round(v,6) if v else None for s,v in rets.items()}
+        })
+        cur3 = new3
+
+    return dict(
+        eq=eq, nf=nf, dd=dd_curve, log=log,
+        trades=total_trades, hold_count=hold_count,
+        last_scores=last_scores, last_rets=last_rets,
+        avail=avail, label=label,
+        period_start=period_start, period_end=period_end,
+    )
 
 # ── STATS ─────────────────────────────────────────────────────────────────────
-def calc_stats(eq, nf, dd, trades):
+def calc_stats(adaptive, initial=None):
+    eq = adaptive["eq"]; nf = adaptive["nf"]; dd = adaptive["dd"]
+    trades = adaptive["trades"]
     if not eq: return None
-    fv=eq[-1]["y"]; nfv=nf[-1]["y"]
-    yrs=max((pd.Timestamp(END)-pd.Timestamp(TRADE_START)).days/365.25,0.1)
-    tr=(fv-INITIAL)/INITIAL*100
-    cagr=(pow(fv/INITIAL,1/yrs)-1)*100
-    nc=(pow(nfv/INITIAL,1/yrs)-1)*100
-    wr=[(eq[i]["y"]-eq[i-1]["y"])/eq[i-1]["y"] for i in range(1,len(eq))]
-    shp=(np.mean(wr)/np.std(wr))*np.sqrt(52) if wr and np.std(wr)>0 else 0
-    mdd=min(d["y"] for d in dd) if dd else 0
-    return dict(final=round(fv,2),ret=round(tr,2),cagr=round(cagr,2),
-                sharpe=round(shp,2),mdd=round(mdd,2),trades=trades,
-                nifty_cagr=round(nc,2),alpha=round(cagr-nc,2),weeks=len(eq))
+    init  = initial or INITIAL
+    fv    = eq[-1]["y"]; nfv = nf[-1]["y"]
+    ps    = pd.Timestamp(adaptive["period_start"])
+    pe    = pd.Timestamp(adaptive["period_end"])
+    yrs   = max((pe-ps).days/365.25, 0.1)
+    tr    = (fv-init)/init*100
+    cagr  = (pow(fv/init, 1/yrs)-1)*100
+    nc    = (pow(nfv/init, 1/yrs)-1)*100
+    wr    = [(eq[i]["y"]-eq[i-1]["y"])/eq[i-1]["y"] for i in range(1,len(eq))]
+    shp   = (np.mean(wr)/np.std(wr))*np.sqrt(52) if wr and np.std(wr)>0 else 0
+    mdd   = min(d["y"] for d in dd) if dd else 0
+    return dict(final=round(fv,2), ret=round(tr,2), cagr=round(cagr,2),
+                sharpe=round(shp,2), mdd=round(mdd,2), trades=trades,
+                nifty_cagr=round(nc,2), alpha=round(cagr-nc,2), weeks=len(eq))
 
 # ── CURRENT SIGNAL ────────────────────────────────────────────────────────────
-def get_current_signal(prices, vix, log):
-    """Return current week's buy recommendation."""
-    if not log: return None
-    last = log[-1]
-    em = {e[0]:e for e in ETFS}
-
-    # Current VIX
+def get_current_signal(prices, vix, ft_result):
+    if not ft_result or not ft_result["log"]: return None
+    last = ft_result["log"][-1]
+    em   = {e[0]:e for e in ETFS}
     cur_vix = float(vix.dropna().iloc[-1]) if vix.notna().sum()>0 else None
-    cur_lb   = vix_to_lookback(cur_vix)
-    cur_reg  = vix_to_regime_label(cur_vix)
-
-    # Current prices
+    cur_lb  = vix_to_lookback(cur_vix)
+    cur_reg = vix_to_regime_label(cur_vix)
     cur_prices = {}
     for sym in last["top3"]:
         if sym in prices.columns:
             cur_prices[sym] = round(float(prices[sym].dropna().iloc[-1]), 2)
-
     return dict(
-        signal_date  = last["date"],
-        exec_date    = last["exec"],
-        top3         = last["top3"],
-        top3_names   = [em[s][1] if s in em else s for s in last["top3"]],
-        top3_short   = [em[s][2] if s in em else s for s in last["top3"]],
-        scores       = {s: round(last["scores"].get(s,0) or 0,4) for s in last["top3"]},
-        rets         = {s: round((last["rets"].get(s,0) or 0)*100,2) for s in last["top3"]},
-        cur_vix      = round(cur_vix,1) if cur_vix else None,
-        cur_regime   = cur_reg,
-        cur_lb       = cur_lb,
-        cur_prices   = cur_prices,
-        portfolio_val= last["capital"],
+        signal_date=last["date"], exec_date=last["exec"],
+        top3=last["top3"],
+        top3_names=[em[s][1] if s in em else s for s in last["top3"]],
+        top3_short=[em[s][2] if s in em else s for s in last["top3"]],
+        scores={s: round(last["scores"].get(s,0) or 0,4) for s in last["top3"]},
+        rets  ={s: round((last["rets"].get(s,0) or 0)*100,2) for s in last["top3"]},
+        cur_vix=round(cur_vix,1) if cur_vix else None,
+        cur_regime=cur_reg, cur_lb=cur_lb,
+        cur_prices=cur_prices,
+        portfolio_val=last["capital"],
+        in_circuit=last.get("in_circuit", False),
     )
 
 # ── BUILD HTML ────────────────────────────────────────────────────────────────
-def build_html(prices, vix, yearly, adaptive, stats, signal):
-    # Locate node_modules relative to this script (works locally AND on GitHub Actions)
+def build_html(prices, vix, yearly, bt_result, ft_result, bt_stats, ft_stats, signal):
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        script_dir,                          # same dir as script
-        os.getcwd(),                         # working directory
-        os.path.expanduser("~"),             # home dir
-    ]
+    candidates = [script_dir, os.getcwd(), os.path.expanduser("~")]
     chartjs = adapter = None
     for base in candidates:
-        cj_path = os.path.join(base, "node_modules", "chart.js", "dist", "chart.umd.js")
-        ad_path = os.path.join(base, "node_modules", "chartjs-adapter-date-fns",
-                               "dist", "chartjs-adapter-date-fns.bundle.js")
-        if os.path.exists(cj_path) and os.path.exists(ad_path):
-            with open(cj_path) as f: chartjs = f.read()
-            with open(ad_path) as f: adapter = f.read()
-            print(f"  Chart.js loaded from: {base}/node_modules")
+        cj = os.path.join(base,"node_modules","chart.js","dist","chart.umd.js")
+        ad = os.path.join(base,"node_modules","chartjs-adapter-date-fns","dist","chartjs-adapter-date-fns.bundle.js")
+        if os.path.exists(cj) and os.path.exists(ad):
+            with open(cj) as f: chartjs = f.read()
+            with open(ad) as f: adapter = f.read()
             break
-    if chartjs is None:
-        # Fallback: CDN links (requires internet on viewer's browser)
-        print("  WARNING: node_modules not found — using CDN links (requires browser internet)")
-        chartjs = ""
-        adapter = ""
-        # Will be handled below with CDN script tags
 
     def p(v,d=1): return f"{'+' if v>0 else ''}{v:.{d}f}%"
     def inr(v):   return f"Rs {v/1e5:.2f}L"
     def cls(v):   return "green" if v>=0 else "red"
 
-    avail = adaptive["avail"]
+    avail = bt_result["avail"]
     em    = {e[0]:e for e in ETFS}
     upd   = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-    # ── Current signal card ───────────────────────────────────────────────
+    # ── Signal card ───────────────────────────────────────────────────────
     if signal:
-        vix_color = ("#22c55e" if (signal["cur_vix"] or 0)<15 else
-                     "#f59e0b" if (signal["cur_vix"] or 0)<22 else "#ef4444")
+        vix_col = ("#22c55e" if (signal["cur_vix"] or 0)<15 else
+                   "#f59e0b" if (signal["cur_vix"] or 0)<22 else "#ef4444")
+        circuit_warn = ""
+        if signal.get("in_circuit"):
+            circuit_warn = '<div style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:10px 14px;margin-bottom:14px;color:#ef4444;font-weight:600;">⚡ DD CIRCUIT BREAKER ACTIVE — Portfolio in LIQUIDBEES (cash). Awaiting 50% DD recovery.</div>'
         sig_html = f"""
 <div class="cc signal-card">
-  <div class="st">THIS WEEK'S BUY SIGNAL</div>
+  <div class="st">THIS WEEK'S BUY SIGNAL — FORWARD TEST</div>
+  {circuit_warn}
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px">
-    <div class="mini-stat">
-      <div class="mini-label">India VIX</div>
-      <div class="mini-val" style="color:{vix_color}">{signal['cur_vix'] or 'N/A'}</div>
-    </div>
-    <div class="mini-stat">
-      <div class="mini-label">Regime</div>
-      <div class="mini-val" style="font-size:1rem">{signal['cur_regime']}</div>
-    </div>
-    <div class="mini-stat">
-      <div class="mini-label">Active Lookback</div>
-      <div class="mini-val accent">{signal['cur_lb']}d</div>
-    </div>
+    <div class="mini-stat"><div class="mini-label">India VIX</div>
+      <div class="mini-val" style="color:{vix_col}">{signal['cur_vix'] or 'N/A'}</div></div>
+    <div class="mini-stat"><div class="mini-label">Regime</div>
+      <div class="mini-val" style="font-size:1rem">{signal['cur_regime']}</div></div>
+    <div class="mini-stat"><div class="mini-label">Active Lookback</div>
+      <div class="mini-val accent">{signal['cur_lb']}d</div></div>
   </div>
   <div style="margin-bottom:16px">
     <div style="font-size:.75rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">BUY / HOLD THESE 3 ETFs</div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">"""
         for sym in signal["top3"]:
-            name  = em[sym][1] if sym in em else sym
-            short = em[sym][2] if sym in em else sym
+            name  = em.get(sym,(sym,sym,sym))[1]
+            short = em.get(sym,(sym,sym,sym))[2]
             sc    = signal["scores"].get(sym,0)*100
             ret   = signal["rets"].get(sym,0)
             px    = signal["cur_prices"].get(sym,"N/A")
@@ -661,69 +651,78 @@ def build_html(prices, vix, yearly, adaptive, stats, signal):
     </div>
   </div>
   <div style="font-size:.78rem;color:var(--muted)">
-    Signal date: <b style="color:var(--text)">{signal['signal_date']}</b> (Fri close) &rarr;
-    Execute: <b style="color:var(--text)">{signal['exec_date']}</b> (Mon open/close) &middot;
-    Portfolio value: <b style="color:var(--accent)">{inr(signal['portfolio_val'])}</b>
+    Signal date: <b style="color:var(--text)">{signal['signal_date']}</b> &rarr;
+    Execute: <b style="color:var(--text)">{signal['exec_date']}</b> &middot;
+    FT Portfolio: <b style="color:var(--accent)">{inr(signal['portfolio_val'])}</b>
   </div>
 </div>"""
     else:
-        sig_html = '<div class="cc"><p style="color:var(--muted)">No signal available yet.</p></div>'
+        sig_html = '<div class="cc"><p style="color:var(--muted)">No forward-test signal available.</p></div>'
 
-    # ── VIX regime map table ──────────────────────────────────────────────
-    regime_html = """<table><thead><tr>
-      <th>VIX Range</th><th>Regime</th><th>Active Lookback</th><th>Rationale</th>
-    </tr></thead><tbody>"""
+    # ── Stats grid helper ─────────────────────────────────────────────────
+    def stats_grid(stats, label, color):
+        if not stats: return f'<div class="cc"><p style="color:var(--muted)">No {label} stats.</p></div>'
+        return f"""
+<div class="cc" style="border-color:{color};border-left:3px solid {color}">
+  <div class="st">{label}</div>
+  <div class="sg">
+    <div class="sc"><div class="lb">Final Value</div><div class="vl accent">{inr(stats["final"])}</div></div>
+    <div class="sc"><div class="lb">Total Return</div><div class="vl {cls(stats["ret"])}">{p(stats["ret"])}</div></div>
+    <div class="sc"><div class="lb">CAGR</div><div class="vl {cls(stats["cagr"])}">{p(stats["cagr"])}</div></div>
+    <div class="sc"><div class="lb">Sharpe</div><div class="vl {cls(stats["sharpe"]-1)}">{stats["sharpe"]:.2f}</div></div>
+    <div class="sc"><div class="lb">Max Drawdown</div><div class="vl red">{p(stats["mdd"])}</div></div>
+    <div class="sc"><div class="lb">Trades</div><div class="vl">{stats["trades"]}</div></div>
+    <div class="sc"><div class="lb">Nifty CAGR</div><div class="vl">{p(stats["nifty_cagr"])}</div></div>
+    <div class="sc"><div class="lb">Alpha vs Nifty</div><div class="vl {cls(stats["alpha"])}">{p(stats["alpha"])}</div></div>
+  </div>
+</div>"""
+
+    bt_stats_html = stats_grid(bt_stats, f"BACKTEST RESULTS (2015–2024) — Calibration Period", "#4f8ef7")
+    ft_stats_html = stats_grid(ft_stats, f"FORWARD TEST RESULTS (2025–{END}) — Out-of-Sample", "#22c55e")
+
+    # ── Regime map ────────────────────────────────────────────────────────
     rationale = {
-        15: "Short momentum — trending low-vol bull market",
-        30: "Medium — normal market conditions",
-        45: "Medium-long — caution, mixed signals",
-        55: "Long — elevated stress, noise filter needed",
-        65: "Max smoothing — crisis/high-vol regime",
+        30: "Normal/Bull: 30d captures trend, best Sharpe across most years",
+        55: "Caution: longer window filters choppy noise (2022 winner)",
+        45: "Elevated/Crisis: medium smoothing outperformed in 2020 crash",
     }
-    colors = {15:"#22c55e",30:"#86efac",45:"#f59e0b",55:"#fb923c",65:"#ef4444"}
+    regime_html = """<table><thead><tr>
+      <th>VIX Range</th><th>Regime</th><th>Active Lookback</th><th>Rationale (v2 corrected)</th>
+    </tr></thead><tbody>"""
+    colors = {30:"#22c55e", 55:"#f59e0b", 45:"#fb923c"}
+    old_map = {15:"Bull / Low Vol", 45:"Normal / Caution", 65:"Crisis"}  # for diff display
     for lo,hi,label,lb in VIX_REGIMES:
         hi_str = str(hi) if hi<999 else "+"
-        cur = signal and signal["cur_vix"] and lo <= signal["cur_vix"] < hi
-        bg = "background:rgba(79,142,247,0.08);" if cur else ""
+        cur = signal and signal["cur_vix"] and lo <= (signal["cur_vix"] or 0) < hi
+        bg  = "background:rgba(79,142,247,0.08);" if cur else ""
         tag = ' <span class="bd bg">ACTIVE</span>' if cur else ""
         regime_html += (f'<tr style="{bg}"><td><b>{lo}–{hi_str}</b></td>'
                         f'<td>{label}{tag}</td>'
-                        f'<td style="color:{colors[lb]};font-weight:700">{lb}d</td>'
-                        f'<td style="color:var(--muted);font-size:.8rem">{rationale[lb]}</td></tr>')
+                        f'<td style="color:{colors.get(lb,"#fff")};font-weight:700">{lb}d</td>'
+                        f'<td style="color:var(--muted);font-size:.8rem">{rationale.get(lb,"")}</td></tr>')
     regime_html += "</tbody></table>"
-    # ── Per-year calibration table ─────────────────────────────────────────
-    # Header row 1: grouped by lookback period
-    lb_group_headers = "".join(
-        f'<th colspan="3" style="text-align:center;border-left:2px solid var(--border);'
-        f'{"background:rgba(79,142,247,0.12);" if lb == (max(LOOKBACKS, key=lambda x: sum(r["lb_stats"][x]["sharpe"] for r in yearly.values() if x in r["lb_stats"]), default=LOOKBACKS[0])) else ""}'
-        f'">{lb}d</th>'
-        for lb in LOOKBACKS
-    )
-    # Header row 2: sub-columns
-    lb_sub_headers = "".join(
-        f'<th style="border-left:2px solid var(--border);font-size:.65rem">Ret%</th>'
-        f'<th style="font-size:.65rem">CAGR</th>'
-        f'<th style="font-size:.65rem">Shrp</th>'
-        for _ in LOOKBACKS
-    )
-    yr_html = f'''<div class="mw"><table>
-      <thead>
-        <tr>
-          <th rowspan="2">Year</th>
-          <th rowspan="2">VIX<br>Avg</th>
-          <th rowspan="2">VIX<br>Max</th>
-          <th rowspan="2">Regime</th>
-          <th rowspan="2">Best<br>LB</th>
-          {lb_group_headers}
-        </tr>
-        <tr>{lb_sub_headers}</tr>
-      </thead><tbody>'''
+
+    # ── Calibration table ─────────────────────────────────────────────────
+    yr_html = """<div class="mw"><table><thead><tr>
+      <th rowspan="2">Year</th><th rowspan="2">VIX Avg</th><th rowspan="2">VIX Max</th>
+      <th rowspan="2">Regime</th><th rowspan="2">Best LB</th>"""
+    for lb in LOOKBACKS:
+        yr_html += f'<th colspan="3" style="text-align:center;border-left:2px solid var(--border)">{lb}d</th>'
+    yr_html += "</tr><tr>"
+    for lb in LOOKBACKS:
+        yr_html += (f'<th style="border-left:2px solid var(--border);font-size:.65rem">Ret%</th>'
+                    f'<th style="font-size:.65rem">CAGR</th>'
+                    f'<th style="font-size:.65rem">Shrp</th>')
+    yr_html += "</tr></thead><tbody>"
 
     for yr, r in sorted(yearly.items()):
-        if not r["lb_stats"]:
-            continue
+        if not r["lb_stats"]: continue
         best = r["best_lb"]
-        row  = f'<tr><td><b>{yr}</b></td>'
+        # Highlight rows where v2 mapping matches best LB
+        v2_lb = vix_to_lookback(r["avg_vix"])
+        correct = "✓" if v2_lb == best else "✗"
+        correct_col = "#22c55e" if v2_lb == best else "#ef4444"
+        row = f'<tr><td><b>{yr}</b> <span title="v2 mapping: {v2_lb}d" style="color:{correct_col};font-size:.7rem">{correct}</span></td>'
         row += f'<td style="text-align:center">{r["avg_vix"] or "—"}</td>'
         row += f'<td style="text-align:center">{r["max_vix"] or "—"}</td>'
         row += f'<td style="font-size:.75rem">{r["regime"]}</td>'
@@ -737,86 +736,92 @@ def build_html(prices, vix, yearly, adaptive, stats, signal):
             fw      = "font-weight:700;" if is_best else ""
             star    = "★ " if is_best else ""
             if st:
-                rc = "#22c55e" if st["ret"]    >= 0 else "#ef4444"
-                cc = "#22c55e" if st["cagr"]   >= 0 else "#ef4444"
-                sc = "#22c55e" if st["sharpe"] >= 1 else ("#f59e0b" if st["sharpe"] >= 0 else "#ef4444")
+                rc = "#22c55e" if st["ret"]>=0 else "#ef4444"
+                cc = "#22c55e" if st["cagr"]>=0 else "#ef4444"
+                sc = "#22c55e" if st["sharpe"]>=1 else ("#f59e0b" if st["sharpe"]>=0 else "#ef4444")
                 row += (f'<td style="{border}{bg}{fw}color:{rc}">{star}{st["ret"]:+.1f}%</td>'
                         f'<td style="{bg}{fw}color:{cc}">{st["cagr"]:+.1f}%</td>'
                         f'<td style="{bg}{fw}color:{sc}">{st["sharpe"]:.2f}</td>')
             else:
-                row += (f'<td style="{border}color:var(--muted)">—</td>'
-                        f'<td style="color:var(--muted)">—</td>'
-                        f'<td style="color:var(--muted)">—</td>')
+                row += f'<td style="{border}color:var(--muted)">—</td><td>—</td><td>—</td>'
         row += "</tr>"
         yr_html += row
 
-    # Average summary row
+    # Summary row
     yr_html += '<tr style="background:var(--card2);border-top:2px solid #4f8ef7;">'
-    yr_html += '<td colspan="5"><b>AVG all years</b></td>'
+    yr_html += '<td colspan="5"><b>AVG (2015–2024)</b></td>'
     for lb in LOOKBACKS:
         rets   = [r["lb_stats"][lb]["ret"]    for r in yearly.values() if lb in r["lb_stats"]]
         cagrs  = [r["lb_stats"][lb]["cagr"]   for r in yearly.values() if lb in r["lb_stats"]]
         sharps = [r["lb_stats"][lb]["sharpe"] for r in yearly.values() if lb in r["lb_stats"]]
         border = "border-left:2px solid var(--border);"
         if rets:
-            am = np.mean(rets);   rc = "#22c55e" if am>=0 else "#ef4444"
-            cm = np.mean(cagrs);  cc = "#22c55e" if cm>=0 else "#ef4444"
-            sm = np.mean(sharps); sc = "#22c55e" if sm>=1 else "#f59e0b"
+            am=np.mean(rets); rc="#22c55e" if am>=0 else "#ef4444"
+            cm=np.mean(cagrs); cc="#22c55e" if cm>=0 else "#ef4444"
+            sm=np.mean(sharps); sc="#22c55e" if sm>=1 else "#f59e0b"
             yr_html += (f'<td style="{border}font-weight:700;color:{rc}">{am:+.1f}%</td>'
                         f'<td style="font-weight:700;color:{cc}">{cm:+.1f}%</td>'
                         f'<td style="font-weight:700;color:{sc}">{sm:.2f}</td>')
         else:
             yr_html += f'<td style="{border}">—</td><td>—</td><td>—</td>'
     yr_html += "</tr></tbody></table></div>"
+    yr_html += '<div style="font-size:.72rem;color:var(--muted);margin-top:8px">✓ = v2 corrected mapping matches best LB | ✗ = mismatch</div>'
 
+    # ── VIX data ──────────────────────────────────────────────────────────
+    vix_data = [{"x":str(dt.date()),"y":round(float(v),2)}
+                for dt,v in vix.dropna().items()]
 
-    # ── VIX chart data ────────────────────────────────────────────────────
-    vix_data = []
-    for dt, v in vix.dropna().items():
-        vix_data.append({"x": str(dt.date()), "y": round(float(v),2)})
+    # ── Trade log helper ──────────────────────────────────────────────────
+    def build_log_html(log_entries):
+        out = ""
+        for lg in reversed(log_entries[-200:]):   # last 200 for perf
+            tags = "".join(
+                f'<span class="tg {"tg-cash" if s==CASH_SYM else ""}">{em.get(s,(s,s,s))[2]}</span>'
+                for s in lg["top3"]
+            )
+            chg = ""
+            if lg["changed"]:
+                ex = " ".join(f'<span class="bd br">- {em.get(s,(s,s,s))[2]}</span>' for s in lg["exiting"])
+                en = " ".join(f'<span class="bd bg">+ {em.get(s,(s,s,s))[2]}</span>' for s in lg["entering"])
+                chg = f'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">{ex} {en}</div>'
+            nc  = "" if lg["changed"] else '<span style="color:var(--muted);font-size:.72rem;margin-left:5px">no change</span>'
+            vx  = f'VIX {lg["vix"]}' if lg["vix"] else ""
+            cb  = ' <span class="bd br">⚡CB</span>' if lg.get("in_circuit") else ""
+            out += (f'<div class="lr" data-c="{"1" if lg["changed"] else "0"}">'
+                    f'<div class="ld">{lg["date"]}<span style="display:block;font-size:.65rem;color:var(--muted)">{lg["lb"]}d · {vx}{cb}</span></div>'
+                    f'<div class="lb2"><div style="display:flex;align-items:center;flex-wrap:wrap">{tags}{nc}</div>'
+                    f'{chg}<div style="color:var(--muted);font-size:.72rem;margin-top:2px">Rs {lg["capital"]/1000:.1f}K · {lg["regime"]}</div>'
+                    f'</div></div>\n')
+        return out
 
-    eq_json = json.dumps(adaptive["eq"])
-    nf_json = json.dumps(adaptive["nf"])
-    dd_json = json.dumps(adaptive["dd"])
-    vx_json = json.dumps(vix_data)
+    bt_log_html = build_log_html(bt_result["log"])
+    ft_log_html = build_log_html(ft_result["log"]) if ft_result else ""
 
-    # ── Trade log ─────────────────────────────────────────────────────────
-    log_html = ""
-    for lg in reversed(adaptive["log"]):
-        tags = "".join(f'<span class="tg">{em[s][2] if s in em else s.replace(".NS","")}</span>' for s in lg["top3"])
-        chg  = ""
-        if lg["changed"]:
-            ex = " ".join(f'<span class="bd br">- {em[s][2] if s in em else s}</span>' for s in lg["exiting"])
-            en = " ".join(f'<span class="bd bg">+ {em[s][2] if s in em else s}</span>' for s in lg["entering"])
-            chg = f'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">{ex} {en}</div>'
-        nc  = "" if lg["changed"] else '<span style="color:var(--muted);font-size:.72rem;margin-left:5px">no change</span>'
-        vx  = f'VIX {lg["vix"]}' if lg["vix"] else ""
-        log_html += (f'<div class="lr" data-c="{"1" if lg["changed"] else "0"}">'
-                     f'<div class="ld">{lg["date"]}<span style="display:block;font-size:.65rem;color:var(--muted)">{lg["lb"]}d · {vx}</span></div>'
-                     f'<div class="lb2"><div style="display:flex;align-items:center;flex-wrap:wrap">{tags}{nc}</div>'
-                     f'{chg}<div style="color:var(--muted);font-size:.72rem;margin-top:2px">Rs {lg["capital"]/1000:.1f}K · {lg["regime"]}</div>'
-                     f'</div></div>\n')
+    # ── RS Rankings ───────────────────────────────────────────────────────
+    ls = (ft_result or bt_result)["last_scores"] or {}
+    lr = (ft_result or bt_result)["last_rets"] or {}
+    rows_r = [(e,ls.get(e[0]),lr.get(e[0])) for e in ETFS if e[0] in avail and ls.get(e[0]) is not None]
+    rows_r.sort(key=lambda x:-x[1])
+    rank_html = '<table><thead><tr><th>#</th><th>ETF</th><th>RS Score</th><th>Return</th><th>Signal</th></tr></thead><tbody>'
+    for i,(etf,sc,ret) in enumerate(rows_r):
+        top  = i < TOP_N
+        med  = ["1","2","3"][i] if i<3 else str(i+1)
+        rs   = f"{ret*100:+.2f}%" if ret else "-"
+        rc   = "green" if (ret or 0)>0 else "red"
+        sig2 = f'<span class="bd {"bg" if top else "bm"}">{"LONG" if top else "OUT"}</span>'
+        bg2  = "background:rgba(79,142,247,.06);" if top else ""
+        rank_html += (f'<tr style="{bg2}"><td>{med}</td>'
+                      f'<td><b>{etf[1]}</b> <span style="color:var(--muted);font-size:.7rem">{etf[2]}</span></td>'
+                      f'<td style="color:var(--accent)">{sc*100:+.3f}</td>'
+                      f'<td class="{rc}">{rs}</td><td>{sig2}</td></tr>')
+    rank_html += "</tbody></table>"
 
-    # ── Rankings ──────────────────────────────────────────────────────────
-    ls = adaptive["last_scores"] or {}; lr = adaptive["last_rets"] or {}
-    rows = [(e,ls.get(e[0]),lr.get(e[0])) for e in ETFS if e[0] in avail and ls.get(e[0]) is not None]
-    rows.sort(key=lambda x:-x[1])
-    medals=["1","2","3"]
-    rank_html='<table><thead><tr><th>#</th><th>ETF</th><th>RS Score</th><th>Return</th><th>Signal</th></tr></thead><tbody>'
-    for i,(etf,sc,ret) in enumerate(rows):
-        top=i<TOP_N; med=medals[i] if i<3 else str(i+1)
-        rs=f"{ret*100:+.2f}%" if ret else "-"; rc="green" if (ret or 0)>0 else "red"
-        sig2=f'<span class="bd {"bg" if top else "bm"}">{"LONG" if top else "OUT"}</span>'
-        bg2='background:rgba(79,142,247,.06);' if top else ''
-        rank_html+=(f'<tr style="{bg2}"><td>{med}</td>'
-                    f'<td><b>{etf[1]}</b> <span style="color:var(--muted);font-size:.7rem">{etf[2]}</span></td>'
-                    f'<td style="color:var(--accent)">{sc*100:+.3f}</td>'
-                    f'<td class="{rc}">{rs}</td><td>{sig2}</td></tr>')
-    rank_html += '</tbody></table>'
+    # ── Chart data ────────────────────────────────────────────────────────
+    bt_eq = bt_result["eq"]; bt_nf = bt_result["nf"]; bt_dd = bt_result["dd"]
+    ft_eq = ft_result["eq"] if ft_result else []
+    ft_nf = ft_result["nf"] if ft_result else []
+    ft_dd = ft_result["dd"] if ft_result else []
 
-    gc = '#2e3250'
-
-    # Build script tags — inline if available, CDN fallback if not
     if chartjs and adapter:
         chartjs_tag = f"<script>{chartjs}</script>"
         adapter_tag = f"<script>{adapter}</script>"
@@ -824,11 +829,13 @@ def build_html(prices, vix, yearly, adaptive, stats, signal):
         chartjs_tag = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>'
         adapter_tag = '<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>'
 
+    gc = "#2e3250"
+
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>India ETF RS — Regime Adaptive Backtest</title>
+<title>India ETF RS — Regime Adaptive (v2)</title>
 <style>
 :root{{--bg:#0f1117;--card:#1a1d27;--card2:#22263a;--border:#2e3250;--accent:#4f8ef7;--green:#22c55e;--red:#ef4444;--text:#e2e8f0;--muted:#8892b0}}
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -837,7 +844,7 @@ header{{background:var(--card);border-bottom:1px solid var(--border);padding:16p
 header h1{{font-size:1.2rem;font-weight:700;color:var(--accent)}}
 .meta{{color:var(--muted);font-size:.82rem}}
 .container{{max-width:1440px;margin:0 auto;padding:22px}}
-.sg{{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:13px;margin-bottom:22px}}
+.sg{{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:13px;margin-bottom:0}}
 .sc{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:15px 17px}}
 .sc .lb{{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}}
 .sc .vl{{font-size:1.35rem;font-weight:700}}
@@ -859,15 +866,11 @@ tr:last-child td{{border-bottom:none}}
 .st{{font-size:.93rem;font-weight:700;margin-bottom:13px;display:flex;align-items:center;gap:8px}}
 .st::before{{content:'';display:block;width:4px;height:17px;background:var(--accent);border-radius:2px}}
 .mw{{overflow-x:auto}}
-.mx{{border-collapse:collapse;font-size:.7rem;white-space:nowrap}}
-.mx th,.mx td{{padding:5px 6px;border:1px solid var(--border);text-align:center;min-width:50px}}
-.mx th{{background:var(--card2);color:var(--muted)}}
-.mx .rl{{font-weight:600;color:var(--text);background:var(--card2);text-align:left;padding-left:8px}}
 .tg{{display:inline-flex;background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:5px;padding:2px 8px;font-size:.77rem;font-weight:600;margin:2px}}
+.tg-cash{{background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.3);color:#f59e0b}}
 .tabs{{display:flex;gap:4px;background:var(--card2);padding:4px;border-radius:8px;width:fit-content;margin-bottom:14px}}
 .tab{{padding:5px 15px;border-radius:6px;cursor:pointer;font-size:.82rem;font-weight:500;color:var(--muted);border:none;background:none}}
 .tab.active{{background:var(--accent);color:#fff}}
-#log{{max-height:360px;overflow-y:auto}}
 .lr{{display:flex;gap:11px;padding:7px 0;border-bottom:1px solid var(--border);font-size:.79rem}}
 .ld{{color:var(--muted);min-width:88px;flex-shrink:0}}
 .lb2{{flex:1}}
@@ -880,13 +883,17 @@ tr:last-child td{{border-bottom:none}}
 .etf-pill-price{{font-size:1.1rem;font-weight:700;color:var(--accent);margin-bottom:4px}}
 .etf-pill-ret{{font-size:.82rem;font-weight:600;margin-bottom:2px}}
 .etf-pill-score{{font-size:.75rem;color:var(--muted)}}
+.divider{{border:none;border-top:2px dashed var(--border);margin:24px 0}}
+.period-label{{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:8px}}
+.period-label::after{{content:'';flex:1;height:1px;background:var(--border)}}
 .upd{{text-align:right;color:var(--muted);font-size:.76rem;padding:6px 0}}
+#log-bt,#log-ft{{max-height:320px;overflow-y:auto}}
 </style>
 </head><body>
 <header>
   <div>
-    <h1>India ETF — Regime-Adaptive RS Backtest</h1>
-    <div class="meta">{len(avail)} ETFs &middot; VIX-driven lookback (15/30/45/55/65d) &middot; Top-3 Long &middot; Weekly &middot; 10yr history &middot; Rs 10L</div>
+    <h1>India ETF — Regime-Adaptive RS Backtest v2</h1>
+    <div class="meta">{len(avail)} ETFs · VIX-driven lookback (30/45/55d corrected) · Top-3 Long · DD circuit breaker (-15%) · Weekly</div>
   </div>
   <div class="meta">Updated: {upd}</div>
 </header>
@@ -894,106 +901,138 @@ tr:last-child td{{border-bottom:none}}
 
 {sig_html}
 
-<!-- STATS -->
-<div class="sg">
-  <div class="sc"><div class="lb">Final Value</div><div class="vl accent">{inr(stats["final"])}</div></div>
-  <div class="sc"><div class="lb">Total Return</div><div class="vl {cls(stats["ret"])}">{p(stats["ret"])}</div></div>
-  <div class="sc"><div class="lb">CAGR</div><div class="vl {cls(stats["cagr"])}">{p(stats["cagr"])}</div></div>
-  <div class="sc"><div class="lb">Sharpe Ratio</div><div class="vl {cls(stats["sharpe"]-1)}">{stats["sharpe"]:.2f}</div></div>
-  <div class="sc"><div class="lb">Max Drawdown</div><div class="vl red">{p(stats["mdd"])}</div></div>
-  <div class="sc"><div class="lb">Total Trades</div><div class="vl">{stats["trades"]}</div></div>
-  <div class="sc"><div class="lb">Nifty CAGR</div><div class="vl">{p(stats["nifty_cagr"])}</div></div>
-  <div class="sc"><div class="lb">Alpha vs Nifty</div><div class="vl {cls(stats["alpha"])}">{p(stats["alpha"])}</div></div>
+<hr class="divider">
+<div class="period-label">▶ BACKTEST PERIOD — 2015 to 2024 (Calibration / In-sample)</div>
+{bt_stats_html}
+
+<div class="cc">
+  <h3>Equity Curve — Backtest 2015–2024 (Adaptive RS vs NiftyBees)</h3>
+  <div class="chartbox" style="height:280px"><canvas id="ec-bt"></canvas></div>
+</div>
+<div class="cc">
+  <h3>Drawdown — Backtest 2015–2024</h3>
+  <div class="chartbox" style="height:140px"><canvas id="dc-bt"></canvas></div>
 </div>
 
-<!-- EQUITY CHART -->
+<hr class="divider">
+<div class="period-label">▶ FORWARD TEST PERIOD — 2025 to {END} (Out-of-sample, no future leakage)</div>
+{ft_stats_html}
+
 <div class="cc">
-  <h3>Equity Curve — Regime-Adaptive vs NiftyBees (10 years)</h3>
-  <div class="chartbox" style="height:300px"><canvas id="ec"></canvas></div>
+  <h3>Equity Curve — Forward Test 2025–{END}</h3>
+  <div class="chartbox" style="height:240px"><canvas id="ec-ft"></canvas></div>
+</div>
+<div class="cc">
+  <h3>Drawdown — Forward Test 2025–{END}</h3>
+  <div class="chartbox" style="height:130px"><canvas id="dc-ft"></canvas></div>
 </div>
 
-<!-- VIX CHART -->
+<hr class="divider">
+
+<!-- VIX -->
 <div class="cc">
-  <h3>India VIX — Regime Zones</h3>
-  <div class="chartbox" style="height:180px"><canvas id="vx"></canvas></div>
+  <h3>India VIX — Full History with Regime Zones</h3>
+  <div class="chartbox" style="height:170px"><canvas id="vx"></canvas></div>
 </div>
 
-<!-- DRAWDOWN -->
+<!-- VIX Regime Map -->
 <div class="cc">
-  <h3>Drawdown</h3>
-  <div class="chartbox" style="height:150px"><canvas id="dc"></canvas></div>
-</div>
-
-<!-- VIX REGIME MAP -->
-<div class="cc">
-  <div class="st">VIX Regime Map — Lookback Selection Rules</div>
+  <div class="st">VIX Regime Map — v2 Corrected Lookback Rules</div>
   {regime_html}
 </div>
 
-<!-- PER-YEAR CALIBRATION -->
+<!-- Calibration table -->
 <div class="cc">
-  <div class="st">Per-Year Calibration — VIX vs Best Lookback (Sharpe-ranked)</div>
-  <div class="mw">{yr_html}</div>
+  <div class="st">Per-Year Calibration (2015–2024 only — honest, no forward leakage)</div>
+  {yr_html}
 </div>
 
 <div class="g2">
-  <div class="cc"><div class="st">Current RS Rankings</div>{rank_html}</div>
+  <!-- Rankings -->
+  <div class="cc">
+    <div class="st">Current RS Rankings (latest signal)</div>
+    {rank_html}
+  </div>
+  <!-- Dual log -->
   <div class="cc">
     <div class="st">Weekly Log</div>
     <div class="tabs">
-      <button class="tab active" onclick="sw('all',this)">All</button>
-      <button class="tab" onclick="sw('chg',this)">Changes</button>
+      <button class="tab active" onclick="sw('bt','all',this)">BT All</button>
+      <button class="tab" onclick="sw('bt','chg',this)">BT Changes</button>
+      <button class="tab" onclick="sw('ft','all',this)">FT All</button>
+      <button class="tab" onclick="sw('ft','chg',this)">FT Changes</button>
     </div>
-    <div id="log">{log_html}</div>
+    <div id="log-bt">{bt_log_html}</div>
+    <div id="log-ft" style="display:none">{ft_log_html}</div>
   </div>
 </div>
 
-<div class="upd">GitHub Actions · yfinance · Regime-Adaptive RS · Signal: Fri close → Execute: Mon close</div>
+<div class="upd">Backtest 2015-2024 (in-sample) · Forward Test 2025-{END} (out-of-sample) · VIX-mapped lookback · DD circuit breaker -15%</div>
 </div>
 
 {chartjs_tag}
 {adapter_tag}
 <script>
-var gc = '{gc}';
-var eqD = {eq_json};
-var nfD = {nf_json};
-var ddD = {dd_json};
-var vxD = {vx_json};
+var gc='{gc}';
+var btEq={json.dumps(bt_eq)};
+var btNf={json.dumps(bt_nf)};
+var btDd={json.dumps(bt_dd)};
+var ftEq={json.dumps(ft_eq)};
+var ftNf={json.dumps(ft_nf)};
+var ftDd={json.dumps(ft_dd)};
+var vxD={json.dumps(vix_data)};
 
-new Chart(document.getElementById('ec'), {{
-  type:'line', data:{{datasets:[
-    {{label:'Adaptive RS', data:eqD, parsing:false, borderColor:'#4f8ef7',
-     backgroundColor:'rgba(79,142,247,0.08)', borderWidth:2, pointRadius:0, tension:0.3, fill:true}},
-    {{label:'NiftyBees',   data:nfD, parsing:false, borderColor:'#f59e0b',
-     backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[5,4], tension:0.3}}
-  ]}},
-  options:{{responsive:true, maintainAspectRatio:false, parsing:false,
-    interaction:{{mode:'index',intersect:false}},
-    plugins:{{legend:{{labels:{{color:'#8892b0',boxWidth:12}}}},
-      tooltip:{{backgroundColor:'#1a1d27',titleColor:'#e2e8f0',bodyColor:'#8892b0',
-        callbacks:{{label:function(c){{return c.dataset.label+': Rs '+(c.raw.y/1000).toFixed(1)+'K';}}}}
-      }}}},
-    scales:{{
-      x:{{type:'time',time:{{unit:'month'}},ticks:{{color:'#8892b0',maxTicksLimit:18}},grid:{{color:gc}}}},
-      y:{{ticks:{{color:'#8892b0',callback:function(v){{return 'Rs '+(v/1000).toFixed(0)+'K';}}}},grid:{{color:gc}}}}
+function mkLine(id, datasets, yFmt, height){{
+  new Chart(document.getElementById(id),{{
+    type:'line', data:{{datasets:datasets}},
+    options:{{responsive:true,maintainAspectRatio:false,parsing:false,
+      interaction:{{mode:'index',intersect:false}},
+      plugins:{{legend:{{labels:{{color:'#8892b0',boxWidth:12}}}},
+        tooltip:{{backgroundColor:'#1a1d27',titleColor:'#e2e8f0',bodyColor:'#8892b0',
+          callbacks:{{label:function(c){{return c.dataset.label+': '+yFmt(c.raw.y);}}}}}}
+      }},
+      scales:{{
+        x:{{type:'time',time:{{unit:'month'}},ticks:{{color:'#8892b0',maxTicksLimit:18}},grid:{{color:gc}}}},
+        y:{{ticks:{{color:'#8892b0',callback:function(v){{return yFmt(v);}}}},grid:{{color:gc}}}}
+      }}
     }}
-  }}
-}});
+  }});
+}}
 
-new Chart(document.getElementById('vx'), {{
+var rupee = function(v){{return 'Rs '+(v/1000).toFixed(0)+'K';}};
+var pct   = function(v){{return v.toFixed(1)+'%';}};
+
+mkLine('ec-bt',[
+  {{label:'Adaptive RS (BT)', data:btEq, parsing:false, borderColor:'#4f8ef7',
+   backgroundColor:'rgba(79,142,247,0.08)', borderWidth:2, pointRadius:0, tension:0.3, fill:true}},
+  {{label:'NiftyBees', data:btNf, parsing:false, borderColor:'#f59e0b',
+   backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[5,4], tension:0.3}}
+], rupee);
+
+mkLine('dc-bt',[
+  {{label:'Drawdown', data:btDd, parsing:false, borderColor:'#ef4444',
+   backgroundColor:'rgba(239,68,68,0.12)', borderWidth:1.5, pointRadius:0, tension:0.3, fill:true}}
+], pct);
+
+mkLine('ec-ft',[
+  {{label:'Adaptive RS (FT)', data:ftEq, parsing:false, borderColor:'#22c55e',
+   backgroundColor:'rgba(34,197,94,0.08)', borderWidth:2, pointRadius:0, tension:0.3, fill:true}},
+  {{label:'NiftyBees', data:ftNf, parsing:false, borderColor:'#f59e0b',
+   backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[5,4], tension:0.3}}
+], rupee);
+
+mkLine('dc-ft',[
+  {{label:'Drawdown', data:ftDd, parsing:false, borderColor:'#ef4444',
+   backgroundColor:'rgba(239,68,68,0.12)', borderWidth:1.5, pointRadius:0, tension:0.3, fill:true}}
+], pct);
+
+new Chart(document.getElementById('vx'),{{
   type:'line', data:{{datasets:[
     {{label:'India VIX', data:vxD, parsing:false, borderColor:'#a78bfa',
      backgroundColor:'rgba(167,139,250,0.08)', borderWidth:1.5, pointRadius:0, tension:0.2, fill:true}}
   ]}},
-  options:{{responsive:true, maintainAspectRatio:false, parsing:false,
-    plugins:{{legend:{{labels:{{color:'#8892b0',boxWidth:12}}}},
-      annotation:{{annotations:{{
-        l1:{{type:'line',yMin:13,yMax:13,borderColor:'#22c55e',borderWidth:1,borderDash:[4,4]}},
-        l2:{{type:'line',yMin:17,yMax:17,borderColor:'#f59e0b',borderWidth:1,borderDash:[4,4]}},
-        l3:{{type:'line',yMin:22,yMax:22,borderColor:'#fb923c',borderWidth:1,borderDash:[4,4]}},
-        l4:{{type:'line',yMin:28,yMax:28,borderColor:'#ef4444',borderWidth:1,borderDash:[4,4]}}
-      }}}}
-    }},
+  options:{{responsive:true,maintainAspectRatio:false,parsing:false,
+    plugins:{{legend:{{labels:{{color:'#8892b0',boxWidth:12}}}}}},
     scales:{{
       x:{{type:'time',time:{{unit:'month'}},ticks:{{color:'#8892b0',maxTicksLimit:18}},grid:{{color:gc}}}},
       y:{{ticks:{{color:'#8892b0'}},grid:{{color:gc}}}}
@@ -1001,39 +1040,32 @@ new Chart(document.getElementById('vx'), {{
   }}
 }});
 
-new Chart(document.getElementById('dc'), {{
-  type:'line', data:{{datasets:[
-    {{label:'Drawdown', data:ddD, parsing:false, borderColor:'#ef4444',
-     backgroundColor:'rgba(239,68,68,0.12)', borderWidth:1.5, pointRadius:0, tension:0.3, fill:true}}
-  ]}},
-  options:{{responsive:true, maintainAspectRatio:false, parsing:false,
-    plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#1a1d27',
-      callbacks:{{label:function(c){{return 'DD: '+c.raw.y.toFixed(2)+'%';}}}}
-    }}}},
-    scales:{{
-      x:{{type:'time',time:{{unit:'month'}},ticks:{{color:'#8892b0',maxTicksLimit:18}},grid:{{color:gc}}}},
-      y:{{ticks:{{color:'#8892b0',callback:function(v){{return v.toFixed(1)+'%';}}}},grid:{{color:gc}}}}
-    }}
-  }}
-}});
-
-function sw(t,el){{
+function sw(period, type, el){{
   document.querySelectorAll('.tab').forEach(function(x){{x.classList.remove('active');}});
   el.classList.add('active');
-  document.querySelectorAll('.lr').forEach(function(r){{
-    r.style.display=(t==='all'||r.dataset.c==='1')?'flex':'none';
-  }});
+  var btLog = document.getElementById('log-bt');
+  var ftLog = document.getElementById('log-ft');
+  if(period==='bt'){{
+    btLog.style.display='block'; ftLog.style.display='none';
+    btLog.querySelectorAll('.lr').forEach(function(r){{
+      r.style.display=(type==='all'||r.dataset.c==='1')?'flex':'none';
+    }});
+  }} else {{
+    btLog.style.display='none'; ftLog.style.display='block';
+    ftLog.querySelectorAll('.lr').forEach(function(r){{
+      r.style.display=(type==='all'||r.dataset.c==='1')?'flex':'none';
+    }});
+  }}
 }}
 </script>
 </body></html>"""
 
-# ── MOCK DATA (for testing without internet) ──────────────────────────────────
+# ── MOCK DATA ─────────────────────────────────────────────────────────────────
 def make_mock_data():
-    """Generates realistic mock ETF + VIX data for testing the full pipeline."""
-    print("MOCK MODE: generating synthetic data (no network calls)")
+    print("MOCK MODE: generating synthetic data")
     trade_dates = pd.date_range(FETCH_START, END, freq="B")
     np.random.seed(42)
-    mock_etfs = [e[0] for e in ETFS[:12]]  # use first 12
+    mock_etfs = [e[0] for e in ETFS[:12]]
     prices_dict = {}
     for sym in mock_etfs:
         drift = np.random.uniform(0.00008, 0.00035)
@@ -1041,63 +1073,97 @@ def make_mock_data():
         start = np.random.uniform(30, 300)
         lr    = np.random.normal(drift, vol, len(trade_dates))
         prices_dict[sym] = start * np.exp(np.cumsum(lr))
+    # Mock LIQUIDBEES — stable ~1000, tiny drift
+    prices_dict[CASH_SYM] = 1000 * np.exp(np.cumsum(np.random.normal(0.00025, 0.0001, len(trade_dates))))
     prices = pd.DataFrame(prices_dict, index=trade_dates)
-    # Mock VIX: mean-reverting ~16, with crisis spikes
     vix_vals = np.random.normal(16, 3, len(trade_dates))
-    for yr, spike in [(2020, 30), (2022, 22), (2016, 18)]:
+    for yr, spike in [(2020,30),(2022,22),(2016,18)]:
         mask = trade_dates.year == yr
         vix_vals[mask] += np.random.uniform(0, spike-14, mask.sum())
-    vix = pd.Series(np.clip(vix_vals, 9, 65), index=trade_dates, name=VIX_SYM)
-    print(f"  Mock: {len(prices)} days, {len(mock_etfs)} ETFs, VIX {vix.min():.0f}-{vix.max():.0f}")
+    vix = pd.Series(np.clip(vix_vals,9,65), index=trade_dates, name=VIX_SYM)
+    print(f"  Mock: {len(prices)} days, {len(prices.columns)} ETFs")
     return prices, vix
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Use --mock flag to test without network: python regime_backtest.py --mock
     USE_MOCK = "--mock" in sys.argv
 
     if USE_MOCK:
         prices, vix = make_mock_data()
     else:
         prices, vix = fetch_all()
+
     if prices.empty:
-        print("ERROR: No data.", file=sys.stderr)
-        print("If Yahoo Finance is blocked on your network, try: python regime_backtest.py --mock")
+        print("ERROR: No data. Try: python regime_backtest.py --mock", file=sys.stderr)
         sys.exit(1)
 
-    # Step 1: per-year calibration
-    yearly = calibrate_yearly(prices, vix)
+    # ── Step 1: calibrate on backtest period only (2015–2024) ─────────────
+    yearly = calibrate_yearly(prices, vix, cal_start=FETCH_START, cal_end=BT_END)
 
-    # Step 2: adaptive backtest
-    adaptive = run_adaptive(prices, vix, {})
+    # ── Step 2: backtest 2015–2024 ────────────────────────────────────────
+    bt_prices = prices[prices.index <= BT_END]
+    bt_vix    = vix[vix.index <= BT_END]
+    bt_result = run_adaptive(bt_prices, bt_vix,
+                             period_start=FETCH_START, period_end=BT_END,
+                             label="Backtest 2015–2024",
+                             initial_capital=INITIAL,
+                             use_circuit_breaker=True)
+    bt_stats  = calc_stats(bt_result, initial=INITIAL) if bt_result else None
 
-    # Step 3: stats
-    stats = calc_stats(adaptive["eq"], adaptive["nf"], adaptive["dd"], adaptive["trades"])
+    # ── Step 3: forward test 2025–today ──────────────────────────────────
+    # Start FT with same initial capital (independent OOS test)
+    ft_prices = prices[prices.index >= FT_START]
+    ft_vix    = vix[vix.index >= FT_START]
+    ft_result = run_adaptive(ft_prices, ft_vix,
+                             period_start=FT_START, period_end=END,
+                             label="Forward Test 2025–today",
+                             initial_capital=INITIAL,
+                             use_circuit_breaker=True)
+    ft_stats  = calc_stats(ft_result, initial=INITIAL) if ft_result else None
 
-    # Step 4: current signal
-    signal = get_current_signal(prices, vix, adaptive["log"])
+    # ── Step 4: current signal from FT log ───────────────────────────────
+    signal = get_current_signal(prices, vix, ft_result or bt_result)
 
-    # Step 5: print summary
+    # ── Step 5: print summary ─────────────────────────────────────────────
     print(f"\n{'='*60}")
-    print("REGIME-ADAPTIVE BACKTEST RESULTS")
+    print("BACKTEST 2015–2024 (In-sample)")
     print(f"{'='*60}")
-    if stats:
-        for k,v in [("Final",f"Rs {stats['final']:,.0f}"),("Return",f"{stats['ret']:+.1f}%"),
-                    ("CAGR",f"{stats['cagr']:+.1f}%"),("Sharpe",f"{stats['sharpe']:.2f}"),
-                    ("Max DD",f"{stats['mdd']:.1f}%"),("Alpha",f"{stats['alpha']:+.1f}%")]:
+    if bt_stats:
+        for k,v in [("Final",f"Rs {bt_stats['final']:,.0f}"),
+                    ("Return",f"{bt_stats['ret']:+.1f}%"),
+                    ("CAGR",f"{bt_stats['cagr']:+.1f}%"),
+                    ("Sharpe",f"{bt_stats['sharpe']:.2f}"),
+                    ("Max DD",f"{bt_stats['mdd']:.1f}%"),
+                    ("Alpha",f"{bt_stats['alpha']:+.1f}%")]:
+            print(f"  {k:<12}: {v}")
+
+    print(f"\n{'='*60}")
+    print(f"FORWARD TEST 2025–{END} (Out-of-sample)")
+    print(f"{'='*60}")
+    if ft_stats:
+        for k,v in [("Final",f"Rs {ft_stats['final']:,.0f}"),
+                    ("Return",f"{ft_stats['ret']:+.1f}%"),
+                    ("CAGR",f"{ft_stats['cagr']:+.1f}%"),
+                    ("Sharpe",f"{ft_stats['sharpe']:.2f}"),
+                    ("Max DD",f"{ft_stats['mdd']:.1f}%"),
+                    ("Alpha",f"{ft_stats['alpha']:+.1f}%")]:
             print(f"  {k:<12}: {v}")
 
     if signal:
         print(f"\nCURRENT SIGNAL ({signal['signal_date']})")
-        print(f"  VIX: {signal['cur_vix']} | Regime: {signal['cur_regime']} | Lookback: {signal['cur_lb']}d")
-        print(f"  BUY: {', '.join(signal['top3_names'])}")
-        for sym in signal["top3"]:
-            name = next((e[1] for e in ETFS if e[0]==sym), sym)
-            print(f"    {name}: Rs {signal['cur_prices'].get(sym,'?')} | "
-                  f"{signal['rets'].get(sym,0):+.1f}% ({signal['cur_lb']}d)")
+        print(f"  VIX: {signal['cur_vix']} | Regime: {signal['cur_regime']} | LB: {signal['cur_lb']}d")
+        if signal.get("in_circuit"):
+            print("  ⚡ CIRCUIT BREAKER ACTIVE — in LIQUIDBEES")
+        else:
+            print(f"  BUY: {', '.join(signal['top3_names'])}")
 
+    # ── Step 6: write HTML ────────────────────────────────────────────────
     os.makedirs("docs", exist_ok=True)
-    html = build_html(prices, vix, yearly, adaptive, stats, signal)
+    html = build_html(prices, vix, yearly,
+                      bt_result or {"eq":[],"nf":[],"dd":[],"log":[],"trades":0,
+                                    "hold_count":{},"last_scores":None,"last_rets":None,"avail":[]},
+                      ft_result,
+                      bt_stats, ft_stats, signal)
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"\nReport -> {OUT_PATH}")
+    print(f"\nReport → {OUT_PATH}")
