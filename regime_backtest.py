@@ -52,7 +52,7 @@ TOP_N     = 3
 COST_PCT  = 0.001
 INITIAL   = 1_000_000
 
-FETCH_START  = "2015-01-01"
+FETCH_START  = "2019-01-01"
 BT_END       = "2024-12-31"   # backtest period end
 FT_START     = "2025-01-01"   # forward test start
 END          = date.today().strftime("%Y-%m-%d")
