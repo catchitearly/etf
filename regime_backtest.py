@@ -616,6 +616,7 @@ def get_current_signal(prices, vix, ft_result):
     )
 
 # ── FULL RS TABLE (45-day lookback) ──────────────────────────────────────────
+# ── FULL RS TABLE (45-day lookback) ──────────────────────────────────────────
 def build_rs_table_html(prices, vix, signal):
     """
     Build standalone HTML page showing full RS table for 45-day lookback.
@@ -744,18 +745,21 @@ tr.top3:hover{background:rgba(34,197,94,0.12)}
         rank_class = "rank-1" if row['rank'] == 1 else "rank-2" if row['rank'] == 2 else "rank-3" if row['rank'] == 3 else "rank-other"
         top3_class = "top3" if row['top3'] else ""
         ret_color = "green" if row['return'] > 0 else "red"
-        signal = "LONG" if row['top3'] else "OUT"
+        signal_text = "LONG" if row['top3'] else "OUT"
         signal_color = "green" if row['top3'] else "muted"
+        
+        # Fix: Handle price formatting safely
+        price_str = f"{row['price']:.2f}" if row['price'] is not None else "—"
         
         html += f"""
             <tr class="{top3_class}">
                 <td><span class="rank-badge {rank_class}">{row['rank']}</span></td>
                 <td><b>{row['name']}</b></td>
                 <td style="color:var(--muted)">{row['short']}</td>
-                <td class="text-right">{row['price']:.2f if row['price'] else '—'}</td>
+                <td class="text-right">{price_str}</td>
                 <td class="text-right {ret_color}">{row['return']:+.2f}%</td>
                 <td class="text-right accent">{row['score']:.4f}</td>
-                <td class="text-center"><span class="{signal_color}" style="font-weight:700">{signal}</span></td>
+                <td class="text-center"><span class="{signal_color}" style="font-weight:700">{signal_text}</span></td>
             </tr>"""
     
     html += """
