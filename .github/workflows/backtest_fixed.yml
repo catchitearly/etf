@@ -2,21 +2,34 @@ name: Run Fixed 45-Day RS Backtester
 
 on:
   schedule:
-    # Run every weekday at 9:30 AM IST (4:00 AM UTC)
     - cron: '0 4 * * 1-5'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
   push:
     branches:
       - main
       - master
 
+# IMPORTANT: Add permissions
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   run-backtest:
     runs-on: ubuntu-latest
     
+    # Add permissions at job level too
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Important for gh-pages deployment
         
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -77,19 +90,7 @@ jobs:
           user_name: 'github-actions[bot]'
           user_email: 'github-actions[bot]@users.noreply.github.com'
           commit_message: 'Update backtest results - ${{ github.run_number }}'
-          
-      - name: Display results summary
-        if: always()
-        run: |
-          echo "=========================================="
-          echo "📊 BACKTEST RESULTS SUMMARY"
-          echo "=========================================="
-          echo ""
-          echo "📁 Dashboard: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
-          echo ""
-          echo "📈 Artifacts:"
-          echo "  - docs/index_fixed45.html (Main dashboard)"
-          echo "  - docs/rs_table_45d_fixed.html (RS rankings)"
-          echo "  - backtest_output.log (Raw output)"
-          echo ""
-          echo "⏰ Last run: $(date)"
+          # Add these options for better reliability
+          allow_empty_commit: false
+          keep_files: false
+          full_commit_message: 'Update backtest results - Run #${{ github.run_number }}'
