@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>45-Day Relative Strength Table — All Instruments</title>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2e3250;--accent:#4f8ef7;--green:#22c55e;--red:#ef4444;--text:#e2e8f0;--muted:#8892b0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:30px}
+.container{max-width:1200px;margin:0 auto}
+h1{color:var(--accent);font-size:1.5rem;margin-bottom:6px}
+.subtitle{color:var(--muted);font-size:.85rem;margin-bottom:24px}
+table{width:100%;border-collapse:collapse;font-size:.85rem;background:var(--card);border-radius:10px;overflow:hidden}
+th{background:var(--border);color:var(--text);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;padding:12px 14px;text-align:left}
+td{padding:10px 14px;border-bottom:1px solid var(--border)}
+tr:hover{background:rgba(79,142,247,0.05)}
+tr.top3{background:rgba(34,197,94,0.06)}
+tr.top3:hover{background:rgba(34,197,94,0.12)}
+.rank-badge{display:inline-block;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:700;font-size:.8rem}
+.rank-1{background:rgba(255,215,0,0.2);color:#ffd700}
+.rank-2{background:rgba(192,192,192,0.2);color:#c0c0c0}
+.rank-3{background:rgba(205,127,50,0.2);color:#cd7f32}
+.rank-other{color:var(--muted)}
+.green{color:var(--green)}
+.red{color:var(--red)}
+.accent{color:var(--accent)}
+.muted{color:var(--muted)}
+.text-right{text-align:right}
+.text-center{text-align:center}
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px}
+.stat-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.stat-value{font-size:1.3rem;font-weight:700;margin-top:3px}
+.export-btn{background:var(--accent);color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer;font-size:.85rem;margin-bottom:20px}
+.export-btn:hover{opacity:.85}
+</style>
+</head>
+<body>
+<div class="container">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:8px">
+        <div>
+            <h1>📊 45-Day Relative Strength Table</h1>
+            <div class="subtitle">
+                All instruments ranked by RS score · Latest data: 2026-07-24
+            </div>
+        </div>
+        <div>
+            <button class="export-btn" onclick="downloadCSV()">📥 Download CSV</button>
+            <button class="export-btn" onclick="window.print()" style="background:var(--border)">🖨️ Print</button>
+        </div>
+    </div>
+
+    <div class="stats-bar">
+        <div class="stat-card"><div class="stat-label">Total Instruments</div><div class="stat-value">23</div></div>
+        <div class="stat-card"><div class="stat-label">Average RS Score</div><div class="stat-value" style="color:var(--accent)">0.0000</div></div>
+        <div class="stat-card"><div class="stat-label">Highest RS</div><div class="stat-value" style="color:var(--green)">0.0611</div></div>
+        <div class="stat-card"><div class="stat-label">Lowest RS</div><div class="stat-value" style="color:var(--red)">-0.1660</div></div>
+    </div>
+    
+    <div style="overflow-x:auto;border-radius:10px;border:1px solid var(--border)">
+    <table>
+        <thead>
+            <tr>
+                <th style="width:60px">Rank</th>
+                <th>ETF Name</th>
+                <th style="width:80px">Symbol</th>
+                <th style="width:100px;text-align:right">Price (Rs)</th>
+                <th style="width:120px;text-align:right">45d Return</th>
+                <th style="width:120px;text-align:right">RS Score</th>
+                <th style="width:80px;text-align:center">Signal</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr class="top3">
+                <td><span class="rank-badge rank-1">1</span></td>
+                <td><b>AutoBees</b></td>
+                <td style="color:var(--muted)">AUTO</td>
+                <td class="text-right">281.18</td>
+                <td class="text-right green">+5.26%</td>
+                <td class="text-right accent">0.0611</td>
+                <td class="text-center"><span class="green" style="font-weight:700">LONG</span></td>
+            </tr>
+            <tr class="top3">
+                <td><span class="rank-badge rank-2">2</span></td>
+                <td><b>BankBees</b></td>
+                <td style="color:var(--muted)">BANK</td>
+                <td class="text-right">587.76</td>
+                <td class="text-right green">+5.03%</td>
+                <td class="text-right accent">0.0587</td>
+                <td class="text-center"><span class="green" style="font-weight:700">LONG</span></td>
+            </tr>
+            <tr class="top3">
+                <td><span class="rank-badge rank-3">3</span></td>
+                <td><b>PSUBankBees</b></td>
+                <td style="color:var(--muted)">PSUB</td>
+                <td class="text-right">93.42</td>
+                <td class="text-right green">+4.24%</td>
+                <td class="text-right accent">0.0504</td>
+                <td class="text-center"><span class="green" style="font-weight:700">LONG</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">4</span></td>
+                <td><b>PharmaBees</b></td>
+                <td style="color:var(--muted)">PHRM</td>
+                <td class="text-right">26.28</td>
+                <td class="text-right green">+4.16%</td>
+                <td class="text-right accent">0.0496</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">5</span></td>
+                <td><b>ConsumeBees</b></td>
+                <td style="color:var(--muted)">CNSM</td>
+                <td class="text-right">130.19</td>
+                <td class="text-right green">+3.82%</td>
+                <td class="text-right accent">0.0460</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">6</span></td>
+                <td><b>JuniorBees</b></td>
+                <td style="color:var(--muted)">JNBR</td>
+                <td class="text-right">776.30</td>
+                <td class="text-right green">+3.05%</td>
+                <td class="text-right accent">0.0379</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">7</span></td>
+                <td><b>GSec 5Y</b></td>
+                <td style="color:var(--muted)">GS5Y</td>
+                <td class="text-right">65.88</td>
+                <td class="text-right green">+2.83%</td>
+                <td class="text-right accent">0.0356</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">8</span></td>
+                <td><b>LT Gilt</b></td>
+                <td style="color:var(--muted)">GSCP</td>
+                <td class="text-right">29.86</td>
+                <td class="text-right green">+2.61%</td>
+                <td class="text-right accent">0.0334</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">9</span></td>
+                <td><b>Midcap150</b></td>
+                <td style="color:var(--muted)">MIDM</td>
+                <td class="text-right">234.83</td>
+                <td class="text-right green">+0.94%</td>
+                <td class="text-right accent">0.0159</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">10</span></td>
+                <td><b>Nifty100</b></td>
+                <td style="color:var(--muted)">NF10</td>
+                <td class="text-right">263.57</td>
+                <td class="text-right green">+0.93%</td>
+                <td class="text-right accent">0.0158</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">11</span></td>
+                <td><b>NiftyBees</b></td>
+                <td style="color:var(--muted)">NFTY</td>
+                <td class="text-right">271.21</td>
+                <td class="text-right green">+0.78%</td>
+                <td class="text-right accent">0.0143</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">12</span></td>
+                <td><b>Momentum100</b></td>
+                <td style="color:var(--muted)">MOM</td>
+                <td class="text-right">66.54</td>
+                <td class="text-right green">+0.73%</td>
+                <td class="text-right accent">0.0137</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">13</span></td>
+                <td><b>LiquidBees</b></td>
+                <td style="color:var(--muted)">LIQD</td>
+                <td class="text-right">999.99</td>
+                <td class="text-right red">-0.00%</td>
+                <td class="text-right accent">0.0061</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">14</span></td>
+                <td><b>ITBees</b></td>
+                <td style="color:var(--muted)">ITMC</td>
+                <td class="text-right">32.00</td>
+                <td class="text-right red">-0.06%</td>
+                <td class="text-right accent">0.0055</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">15</span></td>
+                <td><b>FANGPlus</b></td>
+                <td style="color:var(--muted)">FANG</td>
+                <td class="text-right">196.13</td>
+                <td class="text-right red">-0.13%</td>
+                <td class="text-right accent">0.0048</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">16</span></td>
+                <td><b>InfraBees</b></td>
+                <td style="color:var(--muted)">INFR</td>
+                <td class="text-right">957.26</td>
+                <td class="text-right red">-0.72%</td>
+                <td class="text-right accent">-0.0014</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">17</span></td>
+                <td><b>DivOpp</b></td>
+                <td style="color:var(--muted)">DIVO</td>
+                <td class="text-right">77.01</td>
+                <td class="text-right red">-1.09%</td>
+                <td class="text-right accent">-0.0053</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">18</span></td>
+                <td><b>Nasdaq100</b></td>
+                <td style="color:var(--muted)">NSDQ</td>
+                <td class="text-right">328.15</td>
+                <td class="text-right red">-1.20%</td>
+                <td class="text-right accent">-0.0064</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">19</span></td>
+                <td><b>Value20</b></td>
+                <td style="color:var(--muted)">NV20</td>
+                <td class="text-right">138.91</td>
+                <td class="text-right red">-1.84%</td>
+                <td class="text-right accent">-0.0132</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">20</span></td>
+                <td><b>CPSE ETF</b></td>
+                <td style="color:var(--muted)">CETF</td>
+                <td class="text-right">96.23</td>
+                <td class="text-right red">-7.30%</td>
+                <td class="text-right accent">-0.0702</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">21</span></td>
+                <td><b>HangSeng</b></td>
+                <td style="color:var(--muted)">HNGS</td>
+                <td class="text-right">484.33</td>
+                <td class="text-right red">-9.34%</td>
+                <td class="text-right accent">-0.0916</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">22</span></td>
+                <td><b>GoldBees</b></td>
+                <td style="color:var(--muted)">GOLD</td>
+                <td class="text-right">117.91</td>
+                <td class="text-right red">-9.65%</td>
+                <td class="text-right accent">-0.0948</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+            <tr class="">
+                <td><span class="rank-badge rank-other">23</span></td>
+                <td><b>SilverBees</b></td>
+                <td style="color:var(--muted)">SILV</td>
+                <td class="text-right">210.96</td>
+                <td class="text-right red">-16.46%</td>
+                <td class="text-right accent">-0.1660</td>
+                <td class="text-center"><span class="muted" style="font-weight:700">OUT</span></td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+    <div style="margin-top:12px;font-size:.7rem;color:var(--muted);display:flex;gap:20px;flex-wrap:wrap">
+        <span>🟢 TOP 3 = Buy signal</span>
+        <span>🔴 OUT = Not in portfolio</span>
+        <span>📊 RS Score = Average excess return vs peers (45-day lookback)</span>
+    </div>
+</div>
+
+<script>
+function downloadCSV() {
+    let csv = "Rank,ETF Name,Symbol,Price (Rs),45d Return (%),RS Score,Signal\n";
+    const rows = document.querySelectorAll("tbody tr");
+    rows.forEach(row => {
+        const cells = row.querySelectorAll("td");
+        const rank = cells[0].textContent.trim();
+        const name = cells[1].textContent.trim();
+        const symbol = cells[2].textContent.trim();
+        const price = cells[3].textContent.trim();
+        const ret = cells[4].textContent.trim();
+        const score = cells[5].textContent.trim();
+        const signal = cells[6].textContent.trim();
+        csv += `${rank},${name},${symbol},${price},${ret},${score},${signal}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'rs_45d_table.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
