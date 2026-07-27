@@ -1,0 +1,95 @@
+name: Run Fixed 45-Day RS Backtester
+
+on:
+  schedule:
+    # Run every weekday at 9:30 AM IST (4:00 AM UTC)
+    - cron: '0 4 * * 1-5'
+  workflow_dispatch:  # Allow manual trigger
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  run-backtest:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance pandas numpy requests
+          
+      - name: Install Chart.js for HTML dashboard
+        run: |
+          mkdir -p node_modules/chart.js/dist
+          mkdir -p node_modules/chartjs-adapter-date-fns/dist
+          curl -L https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js -o node_modules/chart.js/dist/chart.umd.js
+          curl -L https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.js -o node_modules/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.js
+          
+      - name: Create cache directory
+        run: mkdir -p .cache/fixed45 docs
+        
+      - name: Run backtester
+        id: backtest
+        run: |
+          python fixed45_backtest.py 2>&1 | tee backtest_output.log
+        continue-on-error: false
+        
+      - name: Check if HTML was generated
+        run: |
+          if [ -f docs/index_fixed45.html ]; then
+            echo "✅ Dashboard generated successfully"
+            ls -la docs/
+          else
+            echo "❌ Dashboard generation failed"
+            exit 1
+          fi
+          
+      - name: Upload backtest results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results
+          path: |
+            docs/index_fixed45.html
+            docs/rs_table_45d_fixed.html
+            backtest_output.log
+          retention-days: 30
+          
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          publish_branch: gh-pages
+          destination_dir: .
+          force_orphan: false
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'Update backtest results - ${{ github.run_number }}'
+          
+      - name: Display results summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "📊 BACKTEST RESULTS SUMMARY"
+          echo "=========================================="
+          echo ""
+          echo "📁 Dashboard: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo ""
+          echo "📈 Artifacts:"
+          echo "  - docs/index_fixed45.html (Main dashboard)"
+          echo "  - docs/rs_table_45d_fixed.html (RS rankings)"
+          echo "  - backtest_output.log (Raw output)"
+          echo ""
+          echo "⏰ Last run: $(date)"
