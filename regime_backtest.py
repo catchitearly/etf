@@ -75,13 +75,22 @@ OUT_PATH     = "docs/index.html"
 #   Crisis      → 45d  (post-spike, medium lookback beats extremes)
 #
 VIX_REGIMES = [
+    (0,   13,  "Bull / Low Vol",    45),
+    (13,  17,  "Normal",            45),
+    (17,  22,  "Caution",           45),
+    (22,  28,  "Elevated Stress",   45),
+    (28, 999,  "Crisis / High Vol", 45),
+]
+'''
+
+[
     (0,   13,  "Bull / Low Vol",    30),
     (13,  17,  "Normal",            30),
     (17,  22,  "Caution",           55),
     (22,  28,  "Elevated Stress",   45),
     (28, 999,  "Crisis / High Vol", 45),
 ]
-
+'''
 
 # ── FETCH ─────────────────────────────────────────────────────────────────────
 def _cache_path(sym):
