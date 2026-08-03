@@ -1,9 +1,7 @@
 name: Run ETF Matrix Backtest
 
 on:
-  schedule:
-    # Runs at 16:30 IST (11:00 UTC) every Friday after Indian markets close
-    - cron: '0 11 * * 5'
+ 
   workflow_dispatch:
 
 permissions:
