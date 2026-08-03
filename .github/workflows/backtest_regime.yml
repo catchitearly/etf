@@ -1,8 +1,7 @@
 name: ETF Regime-Adaptive Backtest
 
 on:
-  schedule:
-    - cron: '0 4 * * 5'   # Every Friday 4:00 AM UTC = 9:30 AM IST
+  
   workflow_dispatch:
 
 permissions:
