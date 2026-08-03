@@ -1,8 +1,7 @@
 name: Run Fixed 45-Day RS Backtester
 
 on:
-  schedule:
-    - cron: '0 4 * * 1-5'
+  
   workflow_dispatch:
   push:
     branches:
